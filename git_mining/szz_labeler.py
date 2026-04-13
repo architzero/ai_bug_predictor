@@ -48,6 +48,12 @@ GENERATED_PATHS = [
     "/docs_src/", "/docs/", "/examples/", "/example/",
 ]
 
+SUPPORTED_EXTENSIONS = (
+    ".py", ".c", ".cpp", ".h",
+    ".java", ".js", ".ts",
+    ".go", ".php", ".cs"
+)
+
 
 # ── Path helpers ───────────────────────────────────────────────────────────────
 
@@ -171,6 +177,9 @@ def extract_bug_labels(repo_path, cache_dir=None):
             fp_norm = _norm_path(filepath)
 
             if is_test_file(fp_norm) or is_generated_file(fp_norm):
+                continue
+
+            if not fp_norm.endswith(SUPPORTED_EXTENSIONS):
                 continue
 
             buggy_files.add(fp_norm)

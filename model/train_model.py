@@ -509,7 +509,22 @@ def train_model(df, repos):
     # SMOTE on the 80% train only
     X_train_smote, y_train_smote = _smote_resample(X_train_final, y_train_final)
     
-    best_model = arch_fold_models[best_arch]
+    print("Using deeper XGBoost for smoother probability output...")
+
+    best_model = Pipeline([
+        ("scaler", StandardScaler()),
+        ("xgb", XGBClassifier(
+            n_estimators=500,
+            max_depth=6,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            eval_metric="logloss",
+            random_state=RANDOM_STATE,
+            n_jobs=-1
+        ))
+    ])
+
     best_model.fit(X_train_smote, y_train_smote)
 
     # ── Probability calibration ────────────────────────────────────────────────────
