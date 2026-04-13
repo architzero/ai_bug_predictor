@@ -1,0 +1,57 @@
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+
+# ── Dataset repos (too large for git — clone separately) ──────────────────────
+dataset/
+
+# ── Trained model binaries ────────────────────────────────────────────────────
+model/*.pkl
+model/*.joblib
+
+# ── Checkpoints (resumable mining state — machine-specific) ───────────────────
+.cache/
+
+# ── Generated SHAP plots (reproducible from code) ─────────────────────────────
+explainability/plots/
+
+# ── Jupyter ────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Coverage & test artifacts ─────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+coverage.xml
+
+# ── IDE / editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+
+# ── Old requirements file (replaced by requirements.txt) ──────────────────────
+req.txt
+
+# ── test_repo (embedded git repo — not part of project) ───────────────────────
+test_repo/
