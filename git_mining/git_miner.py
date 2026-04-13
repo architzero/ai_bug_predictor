@@ -58,7 +58,7 @@ def _load_miner_cache(repo_path):
                 "bug_fixes": 0, "authors": set(), "author_commits": defaultdict(int),
                 "first_commit": None, "last_commit": None, "last_commit_hash": None,
                 "max_added": 0, "commits_2w": 0, "commits_1m": 0, "commits_3m": 0,
-                "last_bug_date": None, "past_bug_count": 0,
+                "last_bug_date": None, "past_bug_count": 0, "co_changes": defaultdict(int),
             })
             file_metrics.update(cached["file_metrics"])
             return file_metrics
@@ -107,9 +107,13 @@ def _load_checkpoint(repo_path):
             "bug_fixes": 0, "authors": set(), "author_commits": defaultdict(int),
             "first_commit": None, "last_commit": None, "last_commit_hash": None,
             "max_added": 0, "commits_2w": 0, "commits_1m": 0, "commits_3m": 0,
-            "last_bug_date": None, "past_bug_count": 0,
+            "last_bug_date": None, "past_bug_count": 0, "co_changes": defaultdict(int),
         })
         for file, metrics in data["file_metrics"].items():
+            if "co_changes" in metrics and isinstance(metrics["co_changes"], dict):
+                co_ch = defaultdict(int)
+                co_ch.update(metrics["co_changes"])
+                metrics["co_changes"] = co_ch
             file_metrics[file].update(metrics)
         return file_metrics, data["processed_hashes"]
     return None, set()
@@ -182,6 +186,7 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
             "commits_3m": 0,
             "last_bug_date": None,
             "past_bug_count": 0,
+            "co_changes": defaultdict(int),
         })
 
     count           = 0
@@ -201,6 +206,14 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                 commit_time = commit_time.replace(tzinfo=timezone.utc)
 
             age_days = (now - commit_time).days
+
+            # Max Files Guard
+            track_co_changes = len(commit.modified_files) <= 50
+            commit_paths = []
+            if track_co_changes:
+                for modified_file in commit.modified_files:
+                    if modified_file.new_path:
+                        commit_paths.append(os.path.normpath(os.path.join(repo_path, modified_file.new_path)))
 
             for modified_file in commit.modified_files:
 
@@ -239,6 +252,11 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                     d["past_bug_count"] += 1
                     d["last_bug_date"]   = commit_time
 
+                if track_co_changes:
+                    for other_path in commit_paths:
+                        if other_path != full_path:
+                            d["co_changes"][other_path] += 1
+
             processed_hashes.add(commit.hash)
             count += 1
 
@@ -259,6 +277,34 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
         commits = d["commits"] if d["commits"] > 0 else 1
 
         d["author_count"] = len(d["authors"])
+        
+        # ── Logical Coupling ──
+        max_coupled_file = None
+        max_coupled_count = 0
+        if "co_changes" in d:
+            for other_path, count in d["co_changes"].items():
+                if count > max_coupled_count:
+                    max_coupled_count = count
+                    max_coupled_file = other_path
+            
+            if max_coupled_file and max_coupled_file in file_metrics and commits > 0:
+                d["max_coupling_strength"] = max_coupled_count / commits
+                d["coupled_file_count"] = len(d["co_changes"])
+                
+                partner_last_hash = file_metrics[max_coupled_file].get("last_commit_hash")
+                if d.get("last_commit_hash") and partner_last_hash and d.get("last_commit_hash") != partner_last_hash:
+                    d["coupled_recent_missing"] = 1
+                else:
+                    d["coupled_recent_missing"] = 0
+                    
+                d["coupling_risk"] = d["max_coupling_strength"] * d["coupled_recent_missing"]
+            else:
+                d["max_coupling_strength"] = 0.0
+                d["coupled_file_count"] = 0
+                d["coupled_recent_missing"] = 0
+                d["coupling_risk"] = 0.0
+                
+            del d["co_changes"]
 
         if commits >= 5 and d["author_commits"]:
             d["ownership"]       = max(d["author_commits"].values()) / commits

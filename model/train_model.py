@@ -118,6 +118,8 @@ _GIT_FEATURE_BASE = [
     "author_count", "low_history_flag", "minor_contributor_ratio",
     "instability_score", "avg_commit_size", "max_commit_ratio",
     "file_age_bucket", "days_since_last_change", "recency_ratio",
+    "max_coupling_strength", "coupled_file_count",
+    "coupled_recent_missing", "coupling_risk",
 ]
 
 

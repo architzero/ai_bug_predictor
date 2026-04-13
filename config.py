@@ -15,7 +15,7 @@ SZZ_CACHE_DIR   = os.path.join(CACHE_DIR, "szz")
 # ── Cache versioning ───────────────────────────────────────────────────────────
 # Increment when filter logic, GENERATED_PATHS, or feature engineering changes.
 # This forces a cache miss and triggers a fresh SZZ / miner run automatically.
-CACHE_VERSION = "v4"
+CACHE_VERSION = "v5"
 
 # ── Model versioning ───────────────────────────────────────────────────────────
 MODEL_VERSION = "v1"
