@@ -253,13 +253,30 @@ def _select_features(X_train, y_train, X_test, threshold='median'):
     mask    = selector.get_support()
     kept    = X_train.columns[mask].tolist()
     dropped = X_train.columns[~mask].tolist()
-    print(f"  RFE: kept {len(kept)}, dropped {len(dropped)} "
-          f"(threshold='{threshold}')")
+
+    # --- Rescue Sparse Features ---
+    FORCE_KEEP = [
+        "max_coupling_strength", 
+        "coupled_file_count", 
+        "coupled_recent_missing", 
+        "coupling_risk"
+    ]
+    
+    rescued = []
+    for f in FORCE_KEEP:
+        if f in dropped:
+            kept.append(f)
+            dropped.remove(f)
+            rescued.append(f)
+
+    print(f"  RFE: kept {len(kept)}, dropped {len(dropped)} (threshold='{threshold}')")
     if dropped:
         print(f"    Dropped: {dropped}")
+    if rescued:
+        print(f"    Rescued sparse features from RFE: {rescued}")
 
-    X_tr_sel = pd.DataFrame(selector.transform(X_train), columns=kept)
-    X_te_sel = pd.DataFrame(selector.transform(X_test),  columns=kept)
+    X_tr_sel = X_train[kept].copy()
+    X_te_sel = X_test[kept].copy()
     return X_tr_sel, X_te_sel, kept
 
 
@@ -314,10 +331,13 @@ def _tune_xgb(X_train, y_train):
         "xgb__subsample":        [0.7, 0.8, 1.0],
         "xgb__colsample_bytree": [0.7, 0.8, 1.0],
     }
+    scale_weight = len(y_train[y_train == 0]) / max(1, len(y_train[y_train == 1]))
+
     pipe = Pipeline([
         ("scaler", StandardScaler()),
         ("xgb", XGBClassifier(
             eval_metric="logloss",
+            scale_pos_weight=scale_weight,
             random_state=RANDOM_STATE,
             n_jobs=-1
         ))
@@ -513,6 +533,8 @@ def train_model(df, repos):
     
     print("Using deeper XGBoost for smoother probability output...")
 
+    scale_weight = len(y_train_smote[y_train_smote == 0]) / max(1, len(y_train_smote[y_train_smote == 1]))
+
     best_model = Pipeline([
         ("scaler", StandardScaler()),
         ("xgb", XGBClassifier(
@@ -526,6 +548,7 @@ def train_model(df, repos):
             reg_alpha=0.01,
             reg_lambda=1.0,
             eval_metric="logloss",
+            scale_pos_weight=scale_weight,
             random_state=RANDOM_STATE,
             n_jobs=-1
         ))

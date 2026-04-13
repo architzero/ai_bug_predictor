@@ -14,6 +14,7 @@ import subprocess
 
 from config import CHECKPOINT_DIR as _CHECKPOINT_DIR, MINER_CACHE_DIR as _MINER_CACHE_DIR
 from git_mining.szz_labeler import is_bug_fix   # single authoritative implementation
+from static_analysis.analyzer import SUPPORTED_EXTENSIONS
 
 CHECKPOINT_DIR  = _CHECKPOINT_DIR
 MINER_CACHE_DIR = _MINER_CACHE_DIR
@@ -208,12 +209,17 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
             age_days = (now - commit_time).days
 
             # Max Files Guard
-            track_co_changes = len(commit.modified_files) <= 50
-            commit_paths = []
-            if track_co_changes:
-                for modified_file in commit.modified_files:
-                    if modified_file.new_path:
-                        commit_paths.append(os.path.normpath(os.path.join(repo_path, modified_file.new_path)))
+            valid_paths = []
+            for modified_file in commit.modified_files:
+                path = modified_file.new_path or modified_file.old_path
+                if not path:
+                    continue
+                if not path.endswith(SUPPORTED_EXTENSIONS):
+                    continue
+                valid_paths.append(os.path.normpath(os.path.join(repo_path, path)))
+
+            track_co_changes = 1 < len(valid_paths) <= 30
+            commit_paths = valid_paths
 
             for modified_file in commit.modified_files:
 
@@ -291,8 +297,8 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                 d["max_coupling_strength"] = max_coupled_count / commits
                 d["coupled_file_count"] = len(d["co_changes"])
                 
-                partner_last_hash = file_metrics[max_coupled_file].get("last_commit_hash")
-                if d.get("last_commit_hash") and partner_last_hash and d.get("last_commit_hash") != partner_last_hash:
+                partner_last_commit = file_metrics[max_coupled_file].get("last_commit")
+                if d.get("last_commit") and partner_last_commit and d.get("last_commit") > partner_last_commit:
                     d["coupled_recent_missing"] = 1
                 else:
                     d["coupled_recent_missing"] = 0
