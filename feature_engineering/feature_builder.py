@@ -114,6 +114,18 @@ def build_features(static_results, git_results):
             "coupled_file_count":     g.get("coupled_file_count", 0),
             "coupled_recent_missing": g.get("coupled_recent_missing", 0),
             "coupling_risk":          g.get("coupling_risk", 0.0),
+            
+            # change burst
+            "commit_burst_score":     g.get("commit_burst_score", 0.0),
+            "recent_commit_burst":    g.get("recent_commit_burst", 0),
+            "burst_ratio":            g.get("burst_ratio", 0.0),
+            "burst_risk":             g.get("burst_risk", 0.0),
+
+            # temporal bug memory
+            "recent_bug_flag":        g.get("recent_bug_flag", 0),
+            "bug_recency_score":      g.get("bug_recency_score", 0.0),
+            "temporal_bug_risk":      g.get("temporal_bug_risk", 0.0),
+            "temporal_bug_memory":    g.get("temporal_bug_memory", 0.0),
 
             # bug history (kept for analysis, excluded from model via LEAKAGE_COLS)
             "past_bug_count":      g.get("past_bug_count",      0),

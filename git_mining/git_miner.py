@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import os
 import pickle
 import subprocess
+import math
 
 from config import CHECKPOINT_DIR as _CHECKPOINT_DIR, MINER_CACHE_DIR as _MINER_CACHE_DIR
 from git_mining.szz_labeler import is_bug_fix   # single authoritative implementation
@@ -60,6 +61,7 @@ def _load_miner_cache(repo_path):
                 "first_commit": None, "last_commit": None, "last_commit_hash": None,
                 "max_added": 0, "commits_2w": 0, "commits_1m": 0, "commits_3m": 0,
                 "last_bug_date": None, "past_bug_count": 0, "co_changes": defaultdict(int),
+                "commit_timestamps": [], "bug_fix_timestamps": [],
             })
             file_metrics.update(cached["file_metrics"])
             return file_metrics
@@ -109,6 +111,7 @@ def _load_checkpoint(repo_path):
             "first_commit": None, "last_commit": None, "last_commit_hash": None,
             "max_added": 0, "commits_2w": 0, "commits_1m": 0, "commits_3m": 0,
             "last_bug_date": None, "past_bug_count": 0, "co_changes": defaultdict(int),
+            "commit_timestamps": [], "bug_fix_timestamps": [],
         })
         for file, metrics in data["file_metrics"].items():
             if "co_changes" in metrics and isinstance(metrics["co_changes"], dict):
@@ -188,6 +191,8 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
             "last_bug_date": None,
             "past_bug_count": 0,
             "co_changes": defaultdict(int),
+            "commit_timestamps": [],
+            "bug_fix_timestamps": [],
         })
 
     count           = 0
@@ -232,6 +237,8 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                 )
                 d = file_metrics[full_path]
 
+                d["commit_timestamps"].append(commit_time)
+
                 d["commits"]       += 1
                 d["lines_added"]   += modified_file.added_lines
                 d["lines_deleted"] += modified_file.deleted_lines
@@ -257,6 +264,7 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                     d["bug_fixes"]      += 1
                     d["past_bug_count"] += 1
                     d["last_bug_date"]   = commit_time
+                    d["bug_fix_timestamps"].append(commit_time)
 
                 if track_co_changes:
                     for other_path in commit_paths:
@@ -338,12 +346,58 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
 
         d["bug_fix_ratio"] = d["past_bug_count"] / commits
 
+        # -------- Change Burst Features --------
+        d["commit_burst_score"] = 0.0
+        d["recent_commit_burst"] = 0
+        d["burst_ratio"] = 0.0
+
+        ts = d.get("commit_timestamps", [])
+        if len(ts) >= 3:
+            ts = sorted(ts)
+            gaps = [(ts[i] - ts[i-1]).days for i in range(1, len(ts))]
+            if gaps:
+                avg_gap = sum(gaps) / len(gaps)
+                min_gap = min(gaps)
+                if avg_gap > 0:
+                    burst = avg_gap / (min_gap + 1e-5)
+                    d["commit_burst_score"] = burst
+                    if burst > 3:
+                        d["recent_commit_burst"] = 1
+                d["burst_ratio"] = d["commits_1m"] / (commits + 1)
+        
+        d["burst_risk"] = d["commit_burst_score"] * d["recent_commit_burst"]
+
+        # -------- Temporal Bug Memory Features --------
+        d["recent_bug_flag"] = 0
+        d["bug_recency_score"] = 0.0
+        d["temporal_bug_risk"] = 0.0
+        d["temporal_bug_memory"] = 0.0
+
+        if d.get("last_bug_date"):
+            delta = d["days_since_last_bug"]
+            if 0 <= delta <= 30:
+                d["recent_bug_flag"] = 1
+            if delta >= 0:
+                d["bug_recency_score"] = 1.0 / (delta + 1)
+
+        d["temporal_bug_risk"] = d["bug_recency_score"] * d["recent_bug_flag"]
+        
+        b_ts = d.get("bug_fix_timestamps", [])
+        decay_sum = 0.0
+        for b_time in b_ts:
+            age = (now - b_time).days
+            if age >= 0:
+                decay_sum += math.exp(-0.0038 * age)
+        d["temporal_bug_memory"] = decay_sum
+
         # clean up intermediate state
         del d["authors"]
         del d["author_commits"]
         del d["first_commit"]
         del d["last_commit"]
         del d["last_bug_date"]
+        d.pop("commit_timestamps", None)
+        d.pop("bug_fix_timestamps", None)
 
     # clear interrupted-run checkpoint; save result cache
     if use_checkpoint:

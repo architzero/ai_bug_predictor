@@ -120,6 +120,8 @@ _GIT_FEATURE_BASE = [
     "file_age_bucket", "days_since_last_change", "recency_ratio",
     "max_coupling_strength", "coupled_file_count",
     "coupled_recent_missing", "coupling_risk",
+    "commit_burst_score", "recent_commit_burst", "burst_ratio", "burst_risk",
+    "recent_bug_flag", "bug_recency_score", "temporal_bug_risk", "temporal_bug_memory",
 ]
 
 
@@ -259,7 +261,11 @@ def _select_features(X_train, y_train, X_test, threshold='median'):
         "max_coupling_strength", 
         "coupled_file_count", 
         "coupled_recent_missing", 
-        "coupling_risk"
+        "coupling_risk",
+        "burst_risk",
+        "recent_commit_burst",
+        "temporal_bug_risk",
+        "recent_bug_flag"
     ]
     
     rescued = []
