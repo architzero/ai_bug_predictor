@@ -13,6 +13,8 @@ import pickle
 import sys
 
 from config import CACHE_VERSION
+from static_analysis.analyzer import SUPPORTED_EXTENSIONS
+from pydriller import Repository, Git
 
 # ── Keyword lists ──────────────────────────────────────────────────────────────
 
@@ -47,12 +49,6 @@ GENERATED_PATHS = [
     # high SZZ-path count with near-zero match rate (e.g. FastAPI 5.1% → fix).
     "/docs_src/", "/docs/", "/examples/", "/example/",
 ]
-
-SUPPORTED_EXTENSIONS = (
-    ".py", ".c", ".cpp", ".h",
-    ".java", ".js", ".ts",
-    ".go", ".php", ".cs"
-)
 
 
 # ── Path helpers ───────────────────────────────────────────────────────────────
@@ -151,40 +147,91 @@ def _save_szz_cache(repo_path, buggy_files, cache_dir):
 
 def extract_bug_labels(repo_path, cache_dir=None):
     """
-    Return a set of normalized relative file paths (forward-slash, lowercase)
-    that appeared in at least one bug-fix commit.
+    Hybrid TRUE SZZ (line-level + fallback file-level)
 
-    Uses cache_dir for persistence — subsequent calls return instantly.
+    Returns:
+        set of normalized file paths that historically contained buggy code
     """
+
     cached = _load_szz_cache(repo_path, cache_dir)
     if cached is not None:
+        print(f"  SZZ: loaded from cache ({len(cached)} buggy files)")
         return cached
 
     buggy_files = set()
-    fix_commits  = 0
 
-    for commit in Repository(repo_path, only_no_merge=True).traverse_commits():
+    fix_commits = 0
+    blame_hits = 0
+    fallback_hits = 0
+
+    repo = Repository(repo_path, only_no_merge=True)
+    git_wrapper = Git(repo_path)
+
+    for commit in repo.traverse_commits():
+
         if not is_bug_fix(commit.msg):
             continue
 
         fix_commits += 1
 
         for file in commit.modified_files:
-            filepath = file.old_path if file.old_path else file.new_path
-            if not filepath:
+
+            # prefer old_path (where bug existed)
+            path = file.old_path or file.new_path
+            if not path:
                 continue
 
-            fp_norm = _norm_path(filepath)
+            fp_norm = _norm_path(path)
 
-            if is_test_file(fp_norm) or is_generated_file(fp_norm):
+            # filter unwanted files
+            if is_test_file(fp_norm):
+                continue
+
+            if is_generated_file(fp_norm):
                 continue
 
             if not fp_norm.endswith(SUPPORTED_EXTENSIONS):
                 continue
 
-            buggy_files.add(fp_norm)
+            # -------------------------------
+            # TRUE LINE-LEVEL SZZ
+            # -------------------------------
 
-    print(f"  SZZ: {fix_commits} fix-commits → {len(buggy_files)} buggy paths (includes deleted/renamed)")
+            deleted_lines = file.diff_parsed.get("deleted", [])
+            if not deleted_lines:
+                continue
+
+            try:
+                # CORRECT API USAGE: Pass the `file` object directly (it is a ModifiedFile object).
+                # PyDriller automatically does the diff, finds the deleted lines, and runs git blame.
+                blamed_dict = git_wrapper.get_commits_last_modified_lines(commit, modification=file)
+                
+                # blamed_dict returns { "filepath": {"commit_hash1", "commit_hash2"} }
+                if blamed_dict:
+                    buggy_files.add(fp_norm)
+                    blame_hits += 1
+                else:
+                    # If blame found nothing, fallback to file-level
+                    buggy_files.add(fp_norm)
+                    fallback_hits += 1
+
+            except Exception as e:
+                # Print the first exception so we aren't flying blind!
+                if fallback_hits == 0: 
+                    print(f"  [Debug] Blame exception: {e}")
+                buggy_files.add(fp_norm)
+                fallback_hits += 1
+
+    print(
+        f"  SZZ (Hybrid): {fix_commits} fix-commits → "
+        f"{len(buggy_files)} buggy paths"
+    )
+
+    print(
+        f"  SZZ stats: "
+        f"blame={blame_hits}, "
+        f"fallback={fallback_hits}"
+    )
 
     _save_szz_cache(repo_path, buggy_files, cache_dir)
 

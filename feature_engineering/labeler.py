@@ -17,6 +17,19 @@ def _norm_rel(filepath, repo_path):
     return rel.replace("\\", "/").lower()
 
 
+def _fuzzy_match(path, buggy_set):
+    path = path.replace("\\", "/").lower()
+
+    for b in buggy_set:
+        b = b.replace("\\", "/").lower()
+
+        if path.endswith(b) or b.endswith(path):
+            return True
+
+    return False
+
+
+
 def create_labels(df, repo_path, cache_dir=None):
     """
     Attach a 'buggy' column (0/1) to df.
@@ -37,7 +50,10 @@ def create_labels(df, repo_path, cache_dir=None):
 
     if buggy_files:
         df["buggy"] = df["file"].apply(
-            lambda fp: 1 if _norm_rel(fp, repo_path) in buggy_files else 0
+            lambda fp: 1 if _fuzzy_match(
+                _norm_rel(fp, repo_path),
+                buggy_files
+            ) else 0
         ).astype(int)
         df["bug_density"] = df["buggy"].astype(float)
 

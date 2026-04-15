@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitSentinel — Bug Risk Predictor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════ NAVBAR -->
+<header class="navbar">
+  <div class="navbar-brand">
+    <div class="brand-icon">GS</div>
+    <div>
+      <div class="brand-name">GitSentinel</div>
+      <div class="brand-sub">Bug Risk Predictor</div>
+    </div>
+  </div>
+
+  <nav class="tab-nav" id="tab-nav">
+    <button class="tab-btn active" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="risk">Risk Analysis</button>
+    <button class="tab-btn" data-tab="explain">Explainability</button>
+  </nav>
+
+  <div class="navbar-right">
+    <div class="status-pill" id="status-pill">
+      <span class="status-dot-live"></span>
+      <span id="status-text">Online</span>
+    </div>
+    <div class="scan-bar">
+      <input id="scan-path" class="scan-input" type="text" placeholder="Paste a local repo path…" />
+      <button id="btn-scan" class="btn btn-accent scan-btn">Scan</button>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════ SCAN BANNER -->
+<div id="scan-banner" class="scan-banner hidden">
+  <div class="spin"></div>
+  <span>Running static analysis &amp; git history mining — this may take a moment…</span>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ MAIN -->
+<main class="page">
+
+  <!-- ─────────────────────────────────────────── TAB: OVERVIEW -->
+  <section id="tab-overview" class="tab-panel active">
+
+    <!-- Stat cards -->
+    <div class="stat-row" id="stat-row">
+      <div class="stat-card skel"></div>
+      <div class="stat-card skel"></div>
+      <div class="stat-card skel"></div>
+      <div class="stat-card skel"></div>
+      <div class="stat-card skel"></div>
+    </div>
+
+    <!-- Charts row -->
+    <div class="grid-2 mb">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Risk Score Distribution</span>
+          <span class="tip" title="How bug-risk probability is spread across all analyzed files. A spike on the right means many high-risk files.">ⓘ</span>
+        </div>
+        <div class="chart-box" style="height:230px"><canvas id="c-histogram"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Risk Tier Breakdown</span>
+          <span class="tip" title="Proportion of files in each risk tier.">ⓘ</span>
+        </div>
+        <div class="chart-box" style="height:180px"><canvas id="c-donut"></canvas></div>
+        <div id="donut-legend" class="donut-legend"></div>
+      </div>
+    </div>
+
+    <!-- Commit simulator -->
+    <div class="card mb">
+      <div class="card-head">
+        <span class="card-title">Commit Risk Simulator</span>
+        <span class="tip" title="Estimate the risk of a pending commit by listing the files it touches.">ⓘ</span>
+      </div>
+      <div class="sim-layout">
+        <div class="sim-left">
+          <label class="field-label">Files in this commit <span class="field-hint">(one per line or comma-separated)</span></label>
+          <textarea id="sim-files" class="code-area" placeholder="src/auth.py&#10;src/models.py"></textarea>
+          <button id="btn-simulate" class="btn btn-accent mt8">Predict Commit Risk</button>
+        </div>
+        <div id="sim-result" class="sim-result hidden">
+          <div class="sim-top">
+            <span class="sim-label">Commit Risk</span>
+            <span id="sim-score" class="sim-score">—</span>
+          </div>
+          <div class="sim-track"><div id="sim-bar" class="sim-fill"></div></div>
+          <div class="sim-meta">Main driver: <span id="sim-driver" class="mono">—</span></div>
+          <div id="sim-chips" class="chip-row"></div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ─────────────────────────────────────────── TAB: RISK ANALYSIS -->
+  <section id="tab-risk" class="tab-panel hidden">
+    <div class="risk-layout">
+
+      <!-- File table -->
+      <div class="card flex-col">
+        <div class="card-head">
+          <span class="card-title">Top Risk Files</span>
+          <div class="row-gap8">
+            <select id="risk-filter" class="sel">
+              <option value="all">All Levels</option>
+              <option value="high">High ≥ 70%</option>
+              <option value="medium">Medium 50–70%</option>
+              <option value="low">Low &lt; 50%</option>
+            </select>
+            <input id="search-input" class="search-inp" type="text" placeholder="Search files…" />
+          </div>
+        </div>
+        <div class="tbl-scroll">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Risk Score <span class="tip" title="Probability (0–100%) that this file contains a bug.">ⓘ</span></th>
+                <th>Code Complexity <span class="tip" title="Cyclomatic complexity — how many independent paths exist. Higher = harder to maintain.">ⓘ</span></th>
+                <th class="hide-sm">Recent Activity <span class="tip" title="Commits touching this file in the last 30 days.">ⓘ</span></th>
+                <th class="hide-md">Status</th>
+              </tr>
+            </thead>
+            <tbody id="files-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Detail panel -->
+      <div class="card detail-card" id="detail-card">
+        <div id="detail-blank" class="detail-blank">
+          <svg width="36" height="36" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p>Select a file to inspect</p>
+        </div>
+
+        <div id="detail-body" class="hidden">
+          <!-- filepath + repo -->
+          <div class="detail-head">
+            <span id="d-filepath" class="d-filepath mono">—</span>
+            <span id="d-repo" class="repo-badge">—</span>
+          </div>
+
+          <!-- gauges -->
+          <div class="gauge-row">
+            <div class="gauge">
+              <div class="gauge-lbl">Risk Score</div>
+              <div id="d-risk" class="gauge-val">—</div>
+              <div id="d-tier" class="gauge-tier">—</div>
+            </div>
+            <div class="gauge">
+              <div class="gauge-lbl">Code Complexity</div>
+              <div id="d-cx" class="gauge-val neutral">—</div>
+              <div class="gauge-tier">avg cyclomatic</div>
+            </div>
+          </div>
+
+          <!-- why risky -->
+          <div class="detail-section">
+            <div class="section-title">Why is this file risky?</div>
+            <div id="d-summary" class="summary-box"></div>
+            <div id="d-bullets" class="bullet-list"></div>
+          </div>
+
+          <!-- factor influence -->
+          <div class="detail-section">
+            <div class="section-title">
+              Factor Influence
+              <span class="tip" title="SHAP values — red bars push risk UP, blue bars push risk DOWN.">ⓘ</span>
+            </div>
+            <div id="d-shap" class="shap-list"></div>
+          </div>
+
+          <!-- suggested actions -->
+          <div class="detail-section" id="d-actions-wrap">
+            <div class="section-title">Suggested Actions</div>
+            <div id="d-actions" class="action-list"></div>
+          </div>
+
+          <!-- complex functions -->
+          <div class="detail-section">
+            <div class="section-title">Complex Functions</div>
+            <div id="d-funcs" class="func-list"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────── TAB: EXPLAINABILITY -->
+  <section id="tab-explain" class="tab-panel hidden">
+
+    <div class="grid-2 mb">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Global Feature Importance</span>
+          <span class="tip" title="Which factors most influence the model's predictions across all files. Longer bar = stronger influence.">ⓘ</span>
+        </div>
+        <div class="chart-box" style="height:300px"><canvas id="c-importance"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Feature Glossary</span>
+          <span class="tip" title="Plain-English explanation of every factor the model uses.">ⓘ</span>
+        </div>
+        <div id="glossary" class="glossary"></div>
+      </div>
+    </div>
+
+    <div class="card mb">
+      <div class="card-head">
+        <span class="card-title">How the Model Works</span>
+      </div>
+      <div class="how-grid">
+        <div class="how-item">
+          <div class="how-num">01</div>
+          <div class="how-title">Static Analysis</div>
+          <div class="how-desc">Lizard scans every file for cyclomatic complexity, function count, and lines of code — without running the code.</div>
+        </div>
+        <div class="how-item">
+          <div class="how-num">02</div>
+          <div class="how-title">Git History Mining</div>
+          <div class="how-desc">PyDriller extracts commit frequency, churn, author patterns, and recent activity from the full git log.</div>
+        </div>
+        <div class="how-item">
+          <div class="how-num">03</div>
+          <div class="how-title">Bug Labeling (SZZ)</div>
+          <div class="how-desc">Commits with keywords like "fix" or "bug" are identified. The previous commit touching those lines is labeled buggy.</div>
+        </div>
+        <div class="how-item">
+          <div class="how-num">04</div>
+          <div class="how-title">XGBoost Prediction</div>
+          <div class="how-desc">A gradient-boosted model trained on cross-project data outputs a 0–1 risk probability per file.</div>
+        </div>
+        <div class="how-item">
+          <div class="how-num">05</div>
+          <div class="how-title">SHAP Explainability</div>
+          <div class="how-desc">SHAP values decompose each prediction into per-feature contributions so you know exactly why a file is flagged.</div>
+        </div>
+        <div class="how-item">
+          <div class="how-num">06</div>
+          <div class="how-title">Actionable Output</div>
+          <div class="how-desc">Risk scores, ranked file lists, and plain-English explanations help teams prioritize reviews and testing.</div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+</main>
+
+<!-- tooltip -->
+<div id="tooltip" class="tooltip hidden"></div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

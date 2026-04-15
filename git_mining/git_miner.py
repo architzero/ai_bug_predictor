@@ -11,9 +11,11 @@ from datetime import datetime, timezone
 import os
 import pickle
 import subprocess
+import math
 
 from config import CHECKPOINT_DIR as _CHECKPOINT_DIR, MINER_CACHE_DIR as _MINER_CACHE_DIR
 from git_mining.szz_labeler import is_bug_fix   # single authoritative implementation
+from static_analysis.analyzer import SUPPORTED_EXTENSIONS
 
 CHECKPOINT_DIR  = _CHECKPOINT_DIR
 MINER_CACHE_DIR = _MINER_CACHE_DIR
@@ -58,7 +60,8 @@ def _load_miner_cache(repo_path):
                 "bug_fixes": 0, "authors": set(), "author_commits": defaultdict(int),
                 "first_commit": None, "last_commit": None, "last_commit_hash": None,
                 "max_added": 0, "commits_2w": 0, "commits_1m": 0, "commits_3m": 0,
-                "last_bug_date": None, "past_bug_count": 0,
+                "last_bug_date": None, "past_bug_count": 0, "co_changes": defaultdict(int),
+                "commit_timestamps": [], "bug_fix_timestamps": [],
             })
             file_metrics.update(cached["file_metrics"])
             return file_metrics
@@ -107,9 +110,14 @@ def _load_checkpoint(repo_path):
             "bug_fixes": 0, "authors": set(), "author_commits": defaultdict(int),
             "first_commit": None, "last_commit": None, "last_commit_hash": None,
             "max_added": 0, "commits_2w": 0, "commits_1m": 0, "commits_3m": 0,
-            "last_bug_date": None, "past_bug_count": 0,
+            "last_bug_date": None, "past_bug_count": 0, "co_changes": defaultdict(int),
+            "commit_timestamps": [], "bug_fix_timestamps": [],
         })
         for file, metrics in data["file_metrics"].items():
+            if "co_changes" in metrics and isinstance(metrics["co_changes"], dict):
+                co_ch = defaultdict(int)
+                co_ch.update(metrics["co_changes"])
+                metrics["co_changes"] = co_ch
             file_metrics[file].update(metrics)
         return file_metrics, data["processed_hashes"]
     return None, set()
@@ -182,6 +190,9 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
             "commits_3m": 0,
             "last_bug_date": None,
             "past_bug_count": 0,
+            "co_changes": defaultdict(int),
+            "commit_timestamps": [],
+            "bug_fix_timestamps": [],
         })
 
     count           = 0
@@ -202,6 +213,19 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
 
             age_days = (now - commit_time).days
 
+            # Max Files Guard
+            valid_paths = []
+            for modified_file in commit.modified_files:
+                path = modified_file.new_path or modified_file.old_path
+                if not path:
+                    continue
+                if not path.endswith(SUPPORTED_EXTENSIONS):
+                    continue
+                valid_paths.append(os.path.normpath(os.path.join(repo_path, path)))
+
+            track_co_changes = 1 < len(valid_paths) <= 30
+            commit_paths = valid_paths
+
             for modified_file in commit.modified_files:
 
                 path = modified_file.new_path
@@ -212,6 +236,8 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                     os.path.join(repo_path, path)
                 )
                 d = file_metrics[full_path]
+
+                d["commit_timestamps"].append(commit_time)
 
                 d["commits"]       += 1
                 d["lines_added"]   += modified_file.added_lines
@@ -238,6 +264,12 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                     d["bug_fixes"]      += 1
                     d["past_bug_count"] += 1
                     d["last_bug_date"]   = commit_time
+                    d["bug_fix_timestamps"].append(commit_time)
+
+                if track_co_changes:
+                    for other_path in commit_paths:
+                        if other_path != full_path:
+                            d["co_changes"][other_path] += 1
 
             processed_hashes.add(commit.hash)
             count += 1
@@ -259,6 +291,34 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
         commits = d["commits"] if d["commits"] > 0 else 1
 
         d["author_count"] = len(d["authors"])
+        
+        # ── Logical Coupling ──
+        max_coupled_file = None
+        max_coupled_count = 0
+        if "co_changes" in d:
+            for other_path, count in d["co_changes"].items():
+                if count > max_coupled_count:
+                    max_coupled_count = count
+                    max_coupled_file = other_path
+            
+            if max_coupled_file and max_coupled_file in file_metrics and commits > 0:
+                d["max_coupling_strength"] = max_coupled_count / commits
+                d["coupled_file_count"] = len(d["co_changes"])
+                
+                partner_last_commit = file_metrics[max_coupled_file].get("last_commit")
+                if d.get("last_commit") and partner_last_commit and d.get("last_commit") > partner_last_commit:
+                    d["coupled_recent_missing"] = 1
+                else:
+                    d["coupled_recent_missing"] = 0
+                    
+                d["coupling_risk"] = d["max_coupling_strength"] * d["coupled_recent_missing"]
+            else:
+                d["max_coupling_strength"] = 0.0
+                d["coupled_file_count"] = 0
+                d["coupled_recent_missing"] = 0
+                d["coupling_risk"] = 0.0
+                
+            del d["co_changes"]
 
         if commits >= 5 and d["author_commits"]:
             d["ownership"]       = max(d["author_commits"].values()) / commits
@@ -286,12 +346,58 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
 
         d["bug_fix_ratio"] = d["past_bug_count"] / commits
 
+        # -------- Change Burst Features --------
+        d["commit_burst_score"] = 0.0
+        d["recent_commit_burst"] = 0
+        d["burst_ratio"] = 0.0
+
+        ts = d.get("commit_timestamps", [])
+        if len(ts) >= 3:
+            ts = sorted(ts)
+            gaps = [(ts[i] - ts[i-1]).days for i in range(1, len(ts))]
+            if gaps:
+                avg_gap = sum(gaps) / len(gaps)
+                min_gap = min(gaps)
+                if avg_gap > 0:
+                    burst = avg_gap / (min_gap + 1e-5)
+                    d["commit_burst_score"] = burst
+                    if burst > 3:
+                        d["recent_commit_burst"] = 1
+                d["burst_ratio"] = d["commits_1m"] / (commits + 1)
+        
+        d["burst_risk"] = d["commit_burst_score"] * d["recent_commit_burst"]
+
+        # -------- Temporal Bug Memory Features --------
+        d["recent_bug_flag"] = 0
+        d["bug_recency_score"] = 0.0
+        d["temporal_bug_risk"] = 0.0
+        d["temporal_bug_memory"] = 0.0
+
+        if d.get("last_bug_date"):
+            delta = d["days_since_last_bug"]
+            if 0 <= delta <= 30:
+                d["recent_bug_flag"] = 1
+            if delta >= 0:
+                d["bug_recency_score"] = 1.0 / (delta + 1)
+
+        d["temporal_bug_risk"] = d["bug_recency_score"] * d["recent_bug_flag"]
+        
+        b_ts = d.get("bug_fix_timestamps", [])
+        decay_sum = 0.0
+        for b_time in b_ts:
+            age = (now - b_time).days
+            if age >= 0:
+                decay_sum += math.exp(-0.0038 * age)
+        d["temporal_bug_memory"] = decay_sum
+
         # clean up intermediate state
         del d["authors"]
         del d["author_commits"]
         del d["first_commit"]
         del d["last_commit"]
         del d["last_bug_date"]
+        d.pop("commit_timestamps", None)
+        d.pop("bug_fix_timestamps", None)
 
     # clear interrupted-run checkpoint; save result cache
     if use_checkpoint:

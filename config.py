@@ -14,8 +14,7 @@ SZZ_CACHE_DIR   = os.path.join(CACHE_DIR, "szz")
 
 # ── Cache versioning ───────────────────────────────────────────────────────────
 # Increment when filter logic, GENERATED_PATHS, or feature engineering changes.
-# This forces a cache miss and triggers a fresh SZZ / miner run automatically.
-CACHE_VERSION = "v3"
+CACHE_VERSION = "v10"
 
 # ── Model versioning ───────────────────────────────────────────────────────────
 MODEL_VERSION = "v1"
@@ -36,7 +35,29 @@ RECENT_DAYS_1M = 30
 RECENT_DAYS_3M = 90
 
 # ── Labeling ───────────────────────────────────────────────────────────────────
-BUG_FIX_KEYWORDS   = ["fix", "bug", "error", "crash", "resolve", "defect"]
+BUG_FIX_KEYWORDS = [
+    "fix",
+    "bug",
+    "error",
+    "crash",
+    "resolve",
+    "defect",
+    "issue",
+    "incorrect",
+    "wrong",
+    "fail",
+    "failure",
+    "patch",
+    "handle",
+    "prevent",
+    "avoid",
+    "correct",
+    "missing",
+    "invalid",
+    "exception",
+    "edge",
+    "case"
+]
 NON_BUG_KEYWORDS   = ["typo", "docs", "readme", "refactor", "format", "style"]
 BUG_DENSITY_THRESH = 0.15   # fallback heuristic: bug_density > this → buggy=1
 MIN_BUG_FIXES_FALLBACK = 2  # fallback: bug_fixes >= this → buggy=1
