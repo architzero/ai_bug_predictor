@@ -12,53 +12,61 @@ from model.train_model import train_model, run_ablation_study
 from model.predict import predict
 from explainability.explainer import explain_prediction
 from model.commit_predictor import predict_commit_risk
-from config import REPOS, TOP_LOCAL_PLOTS, SZZ_CACHE_DIR
+from bug_type_classification.integrator import train_bug_type_classifier, classify_file_bugs
+from config import REPOS, TOP_LOCAL_PLOTS, SZZ_CACHE_DIR, GIT_FEATURES_TO_NORMALIZE
+from sklearn.preprocessing import StandardScaler
 
-# ── 1. Data collection ────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAGE 1 — Data Collection
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 72)
+print("  STAGE 1  ·  DATA COLLECTION")
+print("═" * 72)
+
 all_data = []
-
 for repo_path in REPOS:
-    print(f"\nProcessing {repo_path}")
-
+    repo_name = os.path.basename(repo_path)
     static_results = analyze_repository(repo_path)
     git_results    = mine_git_data(repo_path)
-
     df = build_features(static_results, git_results)
     df = create_labels(df, repo_path, cache_dir=SZZ_CACHE_DIR)
     df["repo"] = repo_path
-
+    buggy = int(df["buggy"].sum())
+    print(f"  ✓  {repo_name:<20}  {len(df):>5} files  |  {buggy:>4} labelled buggy")
     all_data.append(df)
 
-# ── 2. Feature pipeline ───────────────────────────────────────────────────────
-from sklearn.preprocessing import StandardScaler
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAGE 2 — Feature Pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 72)
+print("  STAGE 2  ·  FEATURE PIPELINE")
+print("═" * 72)
 
-GIT_FEATURES_TO_NORMALIZE = [
-    'commits', 'lines_added', 'lines_deleted',
-    'commits_2w', 'commits_1m', 'commits_3m',
-    'recent_churn_ratio', 'recent_activity_score',
-    'instability_score', 'avg_commit_size',
-    'max_commit_size', 'max_commit_ratio',
-    'max_added', 'author_count',
-    'minor_contributor_ratio'
-]
+df = pd.concat(all_data, ignore_index=True)
 
-normalized_dfs = []
-for repo_df in all_data:
-    df_copy = repo_df.copy()
-    cols_present = [c for c in GIT_FEATURES_TO_NORMALIZE if c in df_copy.columns]
-    if cols_present:
-        scaler = StandardScaler()
-        df_copy[cols_present] = scaler.fit_transform(df_copy[cols_present])
-    normalized_dfs.append(df_copy)
+cols_present = [c for c in GIT_FEATURES_TO_NORMALIZE if c in df.columns]
+if cols_present:
+    scaler = StandardScaler()
+    df[cols_present] = scaler.fit_transform(df[cols_present])
+    print(f"  Global StandardScaler applied  →  {len(cols_present)} git features  |  {len(df)} total files")
 
-df = pd.concat(normalized_dfs, ignore_index=True)
 df = filter_correlated_features(df)
 
-print("\nTOTAL FILES:", len(df))
-print("CLASS DISTRIBUTION:")
-print(df["buggy"].value_counts())
+# ── Bug Type Classification ────────────────────────────────────────────────
+print(f"\n  Bug type classifier ...")
+bug_classifier = train_bug_type_classifier(REPOS, SZZ_CACHE_DIR)
+df = classify_file_bugs(df, bug_classifier, SZZ_CACHE_DIR)
 
-# ── 2b. Data integrity check — filename overlap between repos ─────────────────
+buggy_df = df[df["buggy"] == 1]
+type_dist = buggy_df["bug_type"].value_counts()
+print(f"\n  Dataset summary  →  {len(df)} files  |  {int(df['buggy'].sum())} buggy")
+print(f"  Bug type distribution (buggy files only):")
+for btype, cnt in type_dist.items():
+    pct = cnt / len(buggy_df) * 100
+    bar = "█" * max(1, int(pct / 2.5))
+    print(f"    {btype:<20} {cnt:>5}  ({pct:5.1f}%)  {bar}")
+
+# ── Filename overlap integrity check ──────────────────────────────────────
 basename_repos = defaultdict(set)
 for _, row in df.iterrows():
     basename_repos[os.path.basename(str(row["file"]))].add(
@@ -66,28 +74,38 @@ for _, row in df.iterrows():
     )
 overlapping = {k: v for k, v in basename_repos.items() if len(v) > 1}
 if overlapping:
-    print(f"\n⚠  {len(overlapping)} filename(s) appear in multiple repos "
-          "(common names like 'utils.py' are expected — verify no test/label leak):")
-    for fname in sorted(overlapping)[:8]:
-        print(f"   {fname:<35} → {overlapping[fname]}")
+    print(f"\n  ⚠  {len(overlapping)} filename(s) shared across repos (verify no label leak):")
+    for fname in sorted(overlapping)[:6]:
+        print(f"     {fname:<35} → {overlapping[fname]}")
 else:
-    print("\n✓ No filename overlap between repos")
+    print("\n  ✓  No filename overlap between repos")
 
-# ── 3. Training ───────────────────────────────────────────────────────────────
-print("\nTRAINING MODEL")
-# Keep a clean copy for ablation (before predict() adds risk/risky/explanation cols)
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAGE 3 — Model Training
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 72)
+print("  STAGE 3  ·  CROSS-PROJECT MODEL TRAINING")
+print("═" * 72)
+
 df_for_ablation = df.copy()
 model = train_model(df, REPOS)
 
-# ── 4. Prediction + SHAP ─────────────────────────────────────────────────────
-print("\nPREDICTING RISK")
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAGE 4 — Prediction + Explanations
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 72)
+print("  STAGE 4  ·  RISK PREDICTION")
+print("═" * 72)
+
 df = predict(model, df)
 df = explain_prediction(model, df, save_plots=True, top_local=TOP_LOCAL_PLOTS)
 
-# ── 5. Final risk report ──────────────────────────────────────────────────────
-print("\n" + "=" * 70)
-print("  GITSENTINEL — FINAL RISK REPORT")
-print("=" * 70)
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAGE 5 — Final Risk Report
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 72)
+print("  GITSENTINEL  ·  FINAL RISK REPORT")
+print("═" * 72)
 
 TOP_N = 10
 
@@ -95,63 +113,81 @@ for repo_path in REPOS:
     repo_name = os.path.basename(repo_path)
     repo_df   = df[df["repo"] == repo_path].copy()
 
+    if repo_df.empty:
+        continue
+
     buggy_count = int(repo_df["buggy"].sum())
     risky_count = int(repo_df["risky"].sum())
     total       = len(repo_df)
 
-    print(f"\n{'─'*70}")
-    print(f"  PROJECT : {repo_name}  ({total} files | {buggy_count} labelled buggy | {risky_count} flagged risky)")
-    print(f"{'─'*70}")
+    print(f"\n  ┌─ {repo_name}  ({total} files │ {buggy_count} buggy │ {risky_count} flagged risky)")
 
     top_risky = (
         repo_df
         .sort_values("risk", ascending=False)
         .head(TOP_N)
-        [["file", "risk", "buggy", "explanation"]]
+        [["file", "risk", "buggy", "bug_type", "explanation"]]
         .reset_index(drop=True)
     )
 
-    for _, row in top_risky.iterrows():
+    for i, row in top_risky.iterrows():
         fname    = os.path.relpath(str(row["file"]), repo_path)
-        risk_pct = f"{row['risk']:.1%}"
-        label    = "BUGGY" if row["buggy"] == 1 else "clean"
-        expl     = str(row["explanation"])
-        reason   = textwrap.shorten(expl, width=50, placeholder="...")
-        print(f"  {risk_pct:>7}  [{label:^5}]  {fname:<40}  {reason}")
+        risk_pct = f"{row['risk']:.0%}"
+        label    = "BUG" if row["buggy"] == 1 else "   "
+        btype    = str(row.get("bug_type", "unknown"))
+        expl     = textwrap.shorten(str(row["explanation"]), width=45, placeholder="…")
 
-        # ── Function-level risk (top-3 most complex functions) ────────────
-        funcs = get_top_functions(str(row["file"]), top_n=3)
+        if row["risk"] >= 0.80:
+            sev = "CRITICAL"
+        elif row["risk"] >= 0.60:
+            sev = "HIGH    "
+        elif row["risk"] >= 0.40:
+            sev = "MODERATE"
+        else:
+            sev = "LOW     "
+
+        prefix = "  │" if i < len(top_risky) - 1 else "  └"
+        print(f"  │  {risk_pct:>5}  [{label}]  {sev}  {fname:<38}  {btype:<16}  {expl}")
+
+        # Function-level detail (top-2 most complex)
+        funcs = get_top_functions(str(row["file"]), top_n=2)
         for fn in funcs:
-            print(f"           ↳  {fn['name']:<32}  "
-                  f"cx={fn['complexity']:>3}  len={fn['length']:>4}  "
-                  f"params={fn['params']}")
+            print(f"  │             ↳  {fn['name']:<30}  cx={fn['complexity']:>3}  len={fn['length']:>4}")
 
-print(f"\n{'='*70}")
+print(f"\n{'═' * 72}")
 
-# ── 6. Commit simulation ──────────────────────────────────────────────────────
-print("\nSIMULATED COMMIT RISK CHECK")
-print("─" * 40)
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAGE 6 — Commit Risk Simulation
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 72)
+print("  STAGE 6  ·  COMMIT RISK SIMULATION")
+print("═" * 72)
 
-# sample 3 real source files (skip test files)
 source_files = df[~df["file"].str.lower().str.contains("test")]["file"]
-changed = source_files.sample(min(3, len(source_files)), random_state=42).tolist()
-
+changed      = source_files.sample(min(3, len(source_files)), random_state=42).tolist()
 risk_score, risky_df = predict_commit_risk(df, changed)
 
-print(f"Changed files ({len(changed)}):")
+print(f"\n  Simulated changed files ({len(changed)}):")
 for f in changed:
-    print(f"  • {os.path.basename(f)}")
+    print(f"    • {os.path.basename(f)}")
 
-print(f"\nCommit risk score : {risk_score:.2f}")
+risk_label = "CRITICAL" if risk_score >= 0.8 else "HIGH" if risk_score >= 0.6 else "MODERATE" if risk_score >= 0.4 else "LOW"
+print(f"\n  Commit risk score : {risk_score:.2f}  [{risk_label}]")
 
 if not risky_df.empty:
-    print("Highest-risk file in commit:")
     top = risky_df.sort_values("risk", ascending=False).iloc[0]
-    print(f"  {os.path.basename(str(top['file']))}  →  {top['risk']:.1%}")
+    print(f"  Highest-risk file : {os.path.basename(str(top['file']))}  →  {top['risk']:.1%}")
 
-# ── 7. Ablation study ──────────────────────────────────────────────────────────────
-print("\nABLATION STUDY")
-# Use the clean pre-prediction df (predict() adds string columns that break SMOTE)
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAGE 7 — Ablation Study
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "═" * 72)
+print("  STAGE 7  ·  ABLATION STUDY")
+print("═" * 72)
+
 global_feats = model.get("features", None) if isinstance(model, dict) else None
 run_ablation_study(df_for_ablation, global_features=global_feats)
 
+print("\n" + "═" * 72)
+print("  PIPELINE COMPLETE")
+print("═" * 72 + "\n")

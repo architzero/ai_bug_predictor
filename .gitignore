@@ -16,6 +16,9 @@ venv/
 env/
 .env/
 
+# ── Environment variables (SECURITY: Never commit credentials) ────────────────
+.env
+
 # ── Dataset repos (too large for git — clone separately) ──────────────────────
 dataset/
 
@@ -23,8 +26,16 @@ dataset/
 model/*.pkl
 model/*.joblib
 
-# ── Checkpoints (resumable mining state — machine-specific) ───────────────────
+# ── Training log (machine-generated, noisy diff) ──────────────────────────────
+model/training_log.jsonl
+
+# ── Cache (resumable mining state — machine-specific, never shared) ────────────
 .cache/
+
+# ── Database (runtime state, not source) ──────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
 
 # ── Generated SHAP plots (reproducible from code) ─────────────────────────────
 explainability/plots/
@@ -50,8 +61,17 @@ Thumbs.db
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 
+# ── Internal dev / diagnostic scripts (not part of deployable codebase) ───────
+diagnose_bleed.py
+feature_verification.py
+setup_security.py
+
+# ── Internal project docs (not for public repo) ───────────────────────────────
+prd.md
+CLEANUP_SUMMARY.md
+
+# ── Embedded test repo (not part of project) ──────────────────────────────────
+test_repo/
+
 # ── Old requirements file (replaced by requirements.txt) ──────────────────────
 req.txt
-
-# ── test_repo (embedded git repo — not part of project) ───────────────────────
-test_repo/

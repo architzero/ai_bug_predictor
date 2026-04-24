@@ -1,28 +1,164 @@
 import os
 import lizard
+from pathlib import Path
 
 
-SUPPORTED_EXTENSIONS = (
-    ".py", ".c", ".cpp", ".h",
-    ".java", ".js", ".ts",
-    ".go", ".php", ".cs"
-)
+SUPPORTED_EXTENSIONS = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".jsx": "javascript", ".tsx": "typescript", ".java": "java",
+    ".go": "go", ".rb": "ruby", ".php": "php", ".cs": "csharp",
+    ".cpp": "cpp", ".c": "cpp", ".rs": "rust", ".swift": "swift",
+    ".scala": "scala", ".h": "cpp"
+}
 
-# Directories to skip — they contain generated, tutorial, or example code
-# that is never the target of real bug-fix commits
-SKIP_DIR_PATTERNS = [
-    "docs_src", "docs", "examples", "example",
-    "node_modules", "vendor", "dist", "build",
-    ".venv", "venv", "env", "__pycache__",
-    "migrations", "coverage", "generated", "__generated__",
-    "scripts",
+EXCLUDE_PATTERNS = [
+    lambda p: Path(p).name.startswith("test_") or Path(p).name.endswith("_test.py"),
+    lambda p: Path(p).name.startswith("spec_") or Path(p).name.endswith("_spec.py"),
+    lambda p: (Path(p).stem.startswith("_") and 
+               not Path(p).name in ["__init__.py", "__init__.js", "__init__.ts"] and
+               not Path(p).name.startswith("_utils") and
+               not Path(p).name.startswith("_config")),
+    lambda p: any(x in p for x in [
+        "generated", "vendor", "node_modules",
+        "dist/", "build/", "__pycache__", "docs", "examples",
+        "example", "scripts", "migrations", "coverage",
+        "__generated__", ".venv", "venv", "env"
+    ]),
+    lambda p: p.endswith(".min.js"),
+    lambda p: p.endswith(".pb.go"),
+    lambda p: p.endswith("_pb2.py"),
 ]
+
+
+def get_language(filepath: str) -> str | None:
+    """Get language identifier from file extension."""
+    return SUPPORTED_EXTENSIONS.get(Path(filepath).suffix.lower())
+
+
+def should_exclude(filepath: str) -> bool:
+    """Check if file should be excluded from analysis."""
+    return any(fn(filepath) for fn in EXCLUDE_PATTERNS)
 
 
 def _should_skip_dir(dirpath):
     """Return True if any path component matches a skip pattern."""
     parts = dirpath.replace("\\", "/").lower().split("/")
-    return any(part in SKIP_DIR_PATTERNS for part in parts)
+    skip_patterns = [
+        "docs_src", "docs", "examples", "example",
+        "node_modules", "vendor", "dist", "build",
+        ".venv", "venv", "env", "__pycache__",
+        "migrations", "coverage", "generated", "__generated__",
+        "scripts",
+    ]
+    return any(part in skip_patterns for part in parts)
+
+
+def _has_test_file(filepath: str, search_dir: Path) -> bool:
+    """
+    Check if there's a corresponding test file for the given source file.
+    This is a fast heuristic that checks for common test file naming patterns.
+    
+    Args:
+        filepath: Path to the source file
+        search_dir: Directory to search for test files (typically the source file's directory)
+        
+    Returns:
+        True if a test file exists, False otherwise
+    """
+    if not search_dir.exists():
+        return False
+    
+    file_path = Path(filepath)
+    file_stem = file_path.stem
+    file_name = file_path.name
+    
+    # Common test file patterns to check
+    test_patterns = [
+        f"test_{file_stem}",           # test_auth.py
+        f"{file_stem}_test",           # auth_test.py
+        f"spec_{file_stem}",           # spec_auth.py
+        f"{file_stem}_spec",           # auth_spec.py
+        f"{file_stem}.spec",           # auth.spec
+        f"{file_stem}.test",           # auth.test
+    ]
+    
+    # Check in the same directory first
+    for pattern in test_patterns:
+        test_file = search_dir / f"{pattern}{file_path.suffix}"
+        if test_file.exists():
+            return True
+    
+    # Check for test directories (tests/, test/, spec/)
+    test_dirs = ["tests", "test", "spec", "__tests__"]
+    for test_dir in test_dirs:
+        test_dir_path = search_dir.parent / test_dir
+        if test_dir_path.exists():
+            for pattern in test_patterns:
+                test_file = test_dir_path / f"{pattern}{file_path.suffix}"
+                if test_file.exists():
+                    return True
+    
+    return False
+
+
+def empty_metrics(language: str) -> dict:
+    """Return empty metrics for files with no analyzable functions."""
+    return {
+        "file": "",
+        "loc": 0,
+        "avg_complexity": 0,
+        "max_complexity": 0,
+        "functions": 0,
+        "avg_params": 0,
+        "max_function_length": 0,
+        "language": language,
+        "has_test_file": False,
+        "top_functions": []
+    }
+
+
+def analyze_file(filepath: str) -> dict | None:
+    """Analyze a single file and return static metrics."""
+    lang = get_language(filepath)
+    if lang is None or should_exclude(filepath):
+        return None
+
+    result = lizard.analyze_file(filepath)
+    if not result or not result.function_list:
+        empty_result = empty_metrics(lang)
+        empty_result["file"] = filepath
+        return empty_result
+
+    fns = result.function_list
+    complexities = [f.cyclomatic_complexity for f in fns]
+    params       = [f.parameter_count for f in fns]
+    lengths      = [f.length for f in fns]
+
+    # Check for test coverage proxy
+    has_test_file = _has_test_file(filepath, Path(filepath).parent)
+
+    return {
+        # Same names as before — model contract unchanged
+        "file": filepath,
+        "loc": result.nloc,
+        "avg_complexity":    sum(complexities) / len(complexities),
+        "max_complexity":    max(complexities),
+        "functions":         len(fns),
+        "avg_params":        sum(params) / len(params),
+        "max_function_length": max(lengths),
+        "loc_per_function":  sum(lengths) / len(lengths),
+        "complexity_density": sum(complexities) / max(result.nloc, 1),
+        # New column
+        "language":          lang,
+        # Test coverage proxy feature
+        "has_test_file":     has_test_file,
+        # For UI display only (not a model feature)
+        "top_functions": sorted([
+            {"name": f.name, "cx": f.cyclomatic_complexity,
+             "length": f.length, "params": f.parameter_count}
+            for f in fns
+        ], key=lambda x: x["cx"], reverse=True)[:5],
+    }
 
 
 def get_top_functions(file_path, top_n=3):
@@ -74,42 +210,15 @@ def analyze_repository(repo_path, verbose=False):
             continue
 
         for file in files:
-
-            if not file.endswith(SUPPORTED_EXTENSIONS):
+            file_path = os.path.normpath(os.path.join(root, file))
+            
+            # Use the new analyze_file function
+            result = analyze_file(file_path)
+            if result is None:
                 skipped_files.append(file)
                 continue
-
-            file_path = os.path.normpath(os.path.join(root, file))
-
-            try:
-                analysis  = lizard.analyze_file(file_path)
-                functions = analysis.function_list
-
-                if functions:
-                    avg_complexity      = sum(f.cyclomatic_complexity for f in functions) / len(functions)
-                    max_complexity      = max(f.cyclomatic_complexity for f in functions)
-                    avg_params          = sum(f.parameter_count for f in functions) / len(functions)
-                    max_function_length = max(f.length for f in functions)
-                else:
-                    avg_complexity      = 0
-                    max_complexity      = 0
-                    avg_params          = 0
-                    max_function_length = 0
-
-                result = {
-                    "file":                file_path,
-                    "loc":                 analysis.nloc,
-                    "avg_complexity":      avg_complexity,
-                    "max_complexity":      max_complexity,
-                    "functions":           len(functions),
-                    "avg_params":          avg_params,
-                    "max_function_length": max_function_length,
-                }
-
-                results.append(result)
-
-            except Exception as e:
-                print(f"Error analyzing {file_path}: {e}")
+                
+            results.append(result)
 
     if verbose:
         print(f"\n  [Analyzer audit for {os.path.basename(repo_path)}]")

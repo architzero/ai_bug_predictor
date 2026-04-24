@@ -1,12 +1,22 @@
+import logging
 import pandas as pd
 import numpy as np
 
 from config import CORR_DROP_THRESHOLD
 
+logger = logging.getLogger(__name__)
+
+# Language encoding for multi-language support
+LANGUAGE_ENCODING = {
+    "python": 0, "javascript": 1, "typescript": 1,
+    "java": 2, "go": 3, "ruby": 4, "php": 5,
+    "csharp": 6, "cpp": 7, "rust": 8, "other": 9,
+}
+
 
 NON_FEATURE_COLS = [
     "file", "buggy", "bug_fixes", "bug_density",
-    "buggy_commit", "commit_hash", "repo"
+    "buggy_commit", "commit_hash", "repo", "language", "confidence"
 ]
 
 # leakage cols excluded from correlation analysis and model training
@@ -14,12 +24,30 @@ LEAKAGE_COLS = [
     "bug_fix_ratio",
     "past_bug_count",
     "days_since_last_bug",
+    "bug_fixes",  # CRITICAL: This is derived from the label - circular logic
 ]
 
 EXCLUDE_FROM_CORR = set(NON_FEATURE_COLS + LEAKAGE_COLS)
 
 # cap raw day values to 10 years to prevent extreme outliers skewing features
 MAX_AGE_DAYS = 3650
+
+# Language-specific complexity baselines for normalization
+LANGUAGE_COMPLEXITY_BASELINE = {
+    "python": 3.5,
+    "javascript": 3.8,
+    "typescript": 3.8,
+    "java": 5.5,   # higher baseline due to OOP boilerplate
+    "go": 4.0,
+    "ruby": 3.5,
+    "other": 4.0,
+}
+
+def normalize_complexity(raw_complexity: float, language: str) -> float:
+    """Normalize complexity by language baseline to account for structural differences."""
+    baseline = LANGUAGE_COMPLEXITY_BASELINE.get(language, 4.0)
+    # How many times above baseline is this file?
+    return raw_complexity / baseline
 
 
 def build_features(static_results, git_results):
@@ -58,6 +86,10 @@ def build_features(static_results, git_results):
         # new static features from lizard
         avg_params          = static.get("avg_params", 0)
         max_function_length = static.get("max_function_length", 0)
+        language            = static.get("language", "other")
+
+        # language-normalized complexity
+        complexity_vs_baseline = normalize_complexity(avg_cx, language)
 
         row = {
             "file":        file_path,
@@ -70,6 +102,10 @@ def build_features(static_results, git_results):
             "functions":            static["functions"],
             "avg_params":           avg_params,
             "max_function_length":  max_function_length,
+            "language":             language,
+            "language_id":         LANGUAGE_ENCODING.get(language, 9),  # Cast to categorical in train_model
+            "has_test_file":        int(static.get("has_test_file", False)),
+            "complexity_vs_baseline": complexity_vs_baseline,
 
             # complexity ratios
             "complexity_density":      avg_cx / loc,
@@ -135,7 +171,11 @@ def build_features(static_results, git_results):
 
         rows.append(row)
 
-    return pd.DataFrame(rows)
+    df_built = pd.DataFrame(rows)
+    if "language_id" in df_built.columns:
+        df_built["language_id"] = df_built["language_id"].astype("category")
+        
+    return df_built
 
 
 def filter_correlated_features(df):
@@ -171,8 +211,10 @@ def filter_correlated_features(df):
                 to_drop.add(drop)
 
     if to_drop:
-        print(f"Dropping {len(to_drop)} correlated feature(s)  "
-              f"(|corr| > {CORR_DROP_THRESHOLD}, keeping higher target-corr):")
+        logger.info(
+            "Dropping %d correlated feature(s) (|corr| > %s, keeping higher target-corr):",
+            len(to_drop), CORR_DROP_THRESHOLD,
+        )
         for col in sorted(to_drop):
             tc = target_corr.get(col, 0)
             # find the partner it lost to (highest corr, not in to_drop)
@@ -184,8 +226,8 @@ def filter_correlated_features(df):
                 default="?"
             )
             ptc = target_corr.get(partner, 0) if partner != "?" else 0
-            print(f"  \u2212 '{col}' (target_corr={tc:.3f}) "
-                  f"\u2190 kept '{partner}' (target_corr={ptc:.3f})")
+            logger.info("  − '%s' (target_corr=%.3f) ← kept '%s' (target_corr=%.3f)",
+                        col, tc, partner, ptc)
         df = df.drop(columns=list(to_drop))
 
     return df

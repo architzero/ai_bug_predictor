@@ -18,15 +18,30 @@ CACHE_VERSION = "v10"
 
 # ── Model versioning ───────────────────────────────────────────────────────────
 MODEL_VERSION = "v1"
-MODEL_PATH    = os.path.join(MODEL_DIR, f"bug_predictor_{MODEL_VERSION}.pkl")
-FEATURES_PATH = os.path.join(CACHE_DIR, f"features_{MODEL_VERSION}.csv")
+
+# MODEL_LATEST_PATH is always the stable pointer to the newest model.
+# The timestamped per-run path is generated at training time inside
+# train_model._save_model_with_metadata() so importing config at server
+# startup does NOT create a phantom timestamped filename.
+MODEL_LATEST_PATH = os.path.join(MODEL_DIR, "bug_predictor_latest.pkl")
+FEATURES_PATH     = os.path.join(CACHE_DIR, f"features_{MODEL_VERSION}.csv")
+
+# Lightweight training log – one JSON line appended per run (no MLflow needed).
+TRAINING_LOG_PATH = os.path.join(MODEL_DIR, "training_log.jsonl")
 
 # ── Repositories ───────────────────────────────────────────────────────────────
 REPOS = [
+    # Existing Python repos
     os.path.join(DATASET_DIR, "requests"),
     os.path.join(DATASET_DIR, "flask"),
     os.path.join(DATASET_DIR, "fastapi"),
     os.path.join(DATASET_DIR, "httpx"),
+    # New repos for multi-language training set
+    os.path.join(DATASET_DIR, "celery"),
+    os.path.join(DATASET_DIR, "sqlalchemy"),
+    os.path.join(DATASET_DIR, "express"),
+    os.path.join(DATASET_DIR, "axios"),
+    os.path.join(DATASET_DIR, "guava"),
 ]
 
 # ── Git mining ─────────────────────────────────────────────────────────────────
@@ -35,36 +50,26 @@ RECENT_DAYS_1M = 30
 RECENT_DAYS_3M = 90
 
 # ── Labeling ───────────────────────────────────────────────────────────────────
-BUG_FIX_KEYWORDS = [
-    "fix",
-    "bug",
-    "error",
-    "crash",
-    "resolve",
-    "defect",
-    "issue",
-    "incorrect",
-    "wrong",
-    "fail",
-    "failure",
-    "patch",
-    "handle",
-    "prevent",
-    "avoid",
-    "correct",
-    "missing",
-    "invalid",
-    "exception",
-    "edge",
-    "case"
-]
-NON_BUG_KEYWORDS   = ["typo", "docs", "readme", "refactor", "format", "style"]
-BUG_DENSITY_THRESH = 0.15   # fallback heuristic: bug_density > this → buggy=1
-MIN_BUG_FIXES_FALLBACK = 2  # fallback: bug_fixes >= this → buggy=1
+# NOTE: The primary bug-fix keyword list lives in git_mining/szz_labeler.py
+# (POSITIVE_KEYWORDS / NEGATIVE_KEYWORDS) where it governs SZZ commit
+# classification.  Only the heuristic fallback thresholds are kept here.
+BUG_DENSITY_THRESH     = 0.15  # fallback: bug_density > this → buggy=1
+MIN_BUG_FIXES_FALLBACK = 2     # fallback: bug_fixes >= this → buggy=1
 
 # ── Feature engineering ────────────────────────────────────────────────────────
 CORR_DROP_THRESHOLD       = 0.97   # drop one of any pair with |corr| > this
 MIN_COMMITS_FOR_OWNERSHIP = 5      # ownership only computed if commits >= this
+
+# Git metric columns normalised per-repo before training.
+# Single source of truth — imported by both main.py and app_ui.py.
+GIT_FEATURES_TO_NORMALIZE = [
+    "commits", "lines_added", "lines_deleted",
+    "commits_2w", "commits_1m", "commits_3m",
+    "recent_churn_ratio", "recent_activity_score",
+    "instability_score", "avg_commit_size",
+    "max_commit_ratio", "max_added",
+    "author_count", "minor_contributor_ratio",
+]
 
 # ── Model training ─────────────────────────────────────────────────────────────
 RANDOM_STATE      = 42

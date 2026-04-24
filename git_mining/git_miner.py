@@ -13,8 +13,11 @@ import pickle
 import subprocess
 import math
 
-from config import CHECKPOINT_DIR as _CHECKPOINT_DIR, MINER_CACHE_DIR as _MINER_CACHE_DIR
-from git_mining.szz_labeler import is_bug_fix   # single authoritative implementation
+from config import CHECKPOINT_DIR as _CHECKPOINT_DIR, MINER_CACHE_DIR as _MINER_CACHE_DIR, SZZ_CACHE_DIR
+from git_mining.szz_labeler import (
+    is_bug_fix, get_commit_confidence, _norm_path, 
+    _save_szz_cache, _save_szz_msg_cache, is_test_file, is_generated_file
+)
 from static_analysis.analyzer import SUPPORTED_EXTENSIONS
 
 CHECKPOINT_DIR  = _CHECKPOINT_DIR
@@ -173,6 +176,9 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
         _load_checkpoint(repo_path) if use_checkpoint else (None, set())
     )
 
+    szz_buggy_files = {}
+    szz_buggy_messages = defaultdict(set)
+
     if file_metrics is None:
         file_metrics = defaultdict(lambda: {
             "commits": 0,
@@ -206,6 +212,20 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
 
             # use the shared, authoritative is_bug_fix from szz_labeler
             commit_is_bug_fix = is_bug_fix(commit.msg)
+            
+            # ── Inline SZZ v2 Generation ──────────────────────────────────────
+            # We process this here so szz_labeler doesn't have to re-traverse
+            if commit_is_bug_fix and len(commit.modified_files) <= 15:
+                commit_confidence = get_commit_confidence(commit.msg)
+                for file in commit.modified_files:
+                    if file.old_path is not None:
+                        fp_norm = _norm_path(file.old_path)
+                        if not is_test_file(fp_norm) and not is_generated_file(fp_norm):
+                            if fp_norm not in szz_buggy_files:
+                                szz_buggy_files[fp_norm] = commit_confidence
+                            else:
+                                szz_buggy_files[fp_norm] = max(szz_buggy_files[fp_norm], commit_confidence)
+                            szz_buggy_messages[fp_norm].add(commit.msg)
 
             commit_time = commit.committer_date
             if commit_time.tzinfo is None:
@@ -219,7 +239,7 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                 path = modified_file.new_path or modified_file.old_path
                 if not path:
                     continue
-                if not path.endswith(SUPPORTED_EXTENSIONS):
+                if not path.endswith(tuple(SUPPORTED_EXTENSIONS.keys())):
                     continue
                 valid_paths.append(os.path.normpath(os.path.join(repo_path, path)))
 
@@ -244,9 +264,19 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                 d["lines_deleted"] += modified_file.deleted_lines
                 d["max_added"]      = max(d["max_added"], modified_file.added_lines)
 
-                author = commit.author.name
-                d["authors"].add(author)
-                d["author_commits"][author] += 1
+                try:
+                    author = commit.author.name or "unknown"
+                    d["authors"].add(author)
+                    if author not in d["author_commits"]:
+                        d["author_commits"][author] = 0
+                    d["author_commits"][author] += 1
+                except (KeyError, AttributeError):
+                    # Handle problematic author names
+                    author = "unknown"
+                    d["authors"].add(author)
+                    if author not in d["author_commits"]:
+                        d["author_commits"][author] = 0
+                    d["author_commits"][author] += 1
 
                 if d["first_commit"] is None:
                     d["first_commit"] = commit_time
@@ -404,5 +434,13 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
         _clear_checkpoint(repo_path)
     if use_cache:
         _save_miner_cache(repo_path, file_metrics)
+
+    # ── Save SZZ caches inline so szz_labeler skips its own traversal ──────
+    if szz_buggy_files:
+        print(f"  SZZ (inline): {len(szz_buggy_files)} buggy files identified during mining")
+        _save_szz_cache(repo_path, szz_buggy_files, SZZ_CACHE_DIR)
+        # Convert sets to lists for pickle serialization
+        serializable_msgs = {k: list(v) for k, v in szz_buggy_messages.items()}
+        _save_szz_msg_cache(repo_path, serializable_msgs, SZZ_CACHE_DIR)
 
     return file_metrics
