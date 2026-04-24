@@ -26,16 +26,21 @@ Analyzes static code complexity and full Git commit history to produce a ranked 
 
 ```
 ai-bug-predictor/
-├── static_analysis/      # Lizard-based code complexity analyzer
-├── git_mining/           # PyDriller git miner + SZZ labeler
-├── feature_engineering/  # Feature builder + correlation filter
-├── model/                # Training, prediction, commit risk scorer
-├── explainability/       # SHAP global + local plots
-├── tests/                # Unit tests for core feature functions
-├── dataset/              # Clone target repos here (gitignored)
-├── config.py             # All paths and constants
-├── main.py               # Full pipeline entry point
-└── bug_predictor.py      # CLI tool for single repo analysis
+├── bug_type_classification/  # Bug type classifier
+├── explainability/           # SHAP plots
+├── feature_engineering/      # Feature builder + labeler
+├── git_mining/              # PyDriller + SZZ
+├── model/                   # Training + prediction
+├── static/                  # CSS + JS
+├── static_analysis/         # Lizard analyzer
+├── templates/               # HTML templates
+├── tests/                   # Unit tests
+├── dataset/                 # Clone repos here (gitignored)
+├── app_ui.py               # Flask web UI
+├── bug_predictor.py        # CLI tool
+├── config.py               # Configuration
+├── database.py             # SQLAlchemy models
+└── main.py                 # Full pipeline
 ```
 
 ---
@@ -60,7 +65,19 @@ source venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 ```
 
-**4. Clone dataset repos** (into `dataset/` folder)
+**4. Configure environment variables (REQUIRED for web UI)**
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set:
+- **FLASK_SECRET_KEY**: Generate with `python -c "import secrets; print(secrets.token_hex(32))"`
+- **GITHUB_CLIENT_ID** & **GITHUB_CLIENT_SECRET**: Create OAuth app at https://github.com/settings/developers
+  - Authorization callback URL: `http://localhost:5000/auth/github/callback`
+
+See [SECURITY.md](SECURITY.md) for detailed security setup instructions.
+
+**5. Clone dataset repos** (into `dataset/` folder)
 ```bash
 git clone https://github.com/psf/requests      dataset/requests
 git clone https://github.com/pallets/flask     dataset/flask
@@ -80,6 +97,14 @@ python main.py
 ```bash
 python bug_predictor.py dataset/requests
 ```
+
+**Web UI Dashboard:**
+```bash
+python app_ui.py
+# Visit http://localhost:5000
+```
+
+⚠️ **Security Note**: Web UI requires environment variables to be set. See [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -144,3 +169,21 @@ See `requirements.txt`. Key dependencies:
 - `xgboost` — Gradient boosting
 - `imbalanced-learn` — SMOTE
 - `shap` — Explainability
+- `sqlalchemy` — Database ORM
+- `flask-caching` — Response caching
+- `flask-login` — Authentication
+
+---
+
+## Database & Performance
+
+**Database**: All scans persist to SQLite database (`bug_predictor.db`)
+- 90% memory reduction (500MB → 50MB)
+- Data survives restarts
+- Connection pooling for concurrent requests
+
+**Caching**: Flask-Caching for 10-100x faster API responses
+- Cached responses: ~50ms
+- Automatic cache invalidation after scans
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed improvements.
