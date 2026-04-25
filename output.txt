@@ -1,0 +1,680 @@
+(venv) C:\Users\archi\project\ai-bug-predictor>python main.py
+
+════════════════════════════════════════════════════════════════════════
+  STAGE 1  ·  DATA COLLECTION
+════════════════════════════════════════════════════════════════════════
+  Loaded mining cache for requests
+  SZZ: loaded from cache (48 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 48
+  Files in analysis : 17
+  Matched buggy     : 3 (17.6% of analyzed files)
+  SZZ match rate    : 6.2% of SZZ paths exist in analyzer
+  Clean files       : 14 (82.4%)
+  ✓ Label prevalence 17.6% looks healthy
+  ✓  requests                 17 files  |     3 labelled buggy
+  Loaded mining cache for flask
+  SZZ: loaded from cache (73 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 73
+  Files in analysis : 23
+  Matched buggy     : 20 (87.0% of analyzed files)
+  SZZ match rate    : 27.4% of SZZ paths exist in analyzer
+  Clean files       : 3 (13.0%)
+  ⚠ Many buggy files — SZZ filter may be too loose
+  ✓  flask                    23 files  |    20 labelled buggy
+  Loaded mining cache for fastapi
+  SZZ: loaded from cache (37 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 37
+  Files in analysis : 46
+  Matched buggy     : 23 (50.0% of analyzed files)
+  SZZ match rate    : 62.2% of SZZ paths exist in analyzer
+  Clean files       : 23 (50.0%)
+  ✓ Label prevalence 50.0% looks healthy
+  ✓  fastapi                  46 files  |    23 labelled buggy
+  Loaded mining cache for httpx
+  SZZ: loaded from cache (56 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 56
+  Files in analysis : 9
+  Matched buggy     : 6 (66.7% of analyzed files)
+  SZZ match rate    : 10.7% of SZZ paths exist in analyzer
+  Clean files       : 3 (33.3%)
+  ⚠ Many buggy files — SZZ filter may be too loose
+  ✓  httpx                     9 files  |     6 labelled buggy
+  Loaded mining cache for celery
+  SZZ: loaded from cache (250 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 250
+  Files in analysis : 208
+  Matched buggy     : 136 (65.4% of analyzed files)
+  SZZ match rate    : 54.4% of SZZ paths exist in analyzer
+  Clean files       : 72 (34.6%)
+  ⚠ Many buggy files — SZZ filter may be too loose
+  ✓  celery                  208 files  |   136 labelled buggy
+  Loaded mining cache for sqlalchemy
+  SZZ: loaded from cache (249 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 249
+  Files in analysis : 210
+  Matched buggy     : 169 (80.5% of analyzed files)
+  SZZ match rate    : 67.9% of SZZ paths exist in analyzer
+  Clean files       : 41 (19.5%)
+  ⚠ Many buggy files — SZZ filter may be too loose
+  ✓  sqlalchemy              210 files  |   169 labelled buggy
+  Loaded mining cache for express
+  SZZ: loaded from cache (51 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 51
+  Files in analysis : 7
+  Matched buggy     : 6 (85.7% of analyzed files)
+  SZZ match rate    : 11.8% of SZZ paths exist in analyzer
+  Clean files       : 1 (14.3%)
+  ⚠ Many buggy files — SZZ filter may be too loose
+  ✓  express                   7 files  |     6 labelled buggy
+  Loaded mining cache for axios
+  SZZ: loaded from cache (74 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 74
+  Files in analysis : 70
+  Matched buggy     : 55 (78.6% of analyzed files)
+  SZZ match rate    : 74.3% of SZZ paths exist in analyzer
+  Clean files       : 15 (21.4%)
+  ⚠ Many buggy files — SZZ filter may be too loose
+  ✓  axios                    70 files  |    55 labelled buggy
+  Loaded mining cache for guava
+  SZZ: loaded from cache (747 buggy files)
+
+  Label Audit:
+  SZZ raw paths     : 747
+  Files in analysis : 1405
+  Matched buggy     : 550 (39.1% of analyzed files)
+  SZZ match rate    : 73.6% of SZZ paths exist in analyzer
+  Clean files       : 855 (60.9%)
+  ✓ Label prevalence 39.1% looks healthy
+  ✓  guava                  1405 files  |   550 labelled buggy
+
+════════════════════════════════════════════════════════════════════════
+  STAGE 2  ·  FEATURE PIPELINE
+════════════════════════════════════════════════════════════════════════
+  Global StandardScaler applied  →  14 git features  |  1995 total files
+
+  Bug type classifier ...
+C:\Users\archi\project\ai-bug-predictor\venv\Lib\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator TfidfTransformer from version 1.5.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+C:\Users\archi\project\ai-bug-predictor\venv\Lib\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator TfidfVectorizer from version 1.5.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+C:\Users\archi\project\ai-bug-predictor\venv\Lib\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator LogisticRegression from version 1.5.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+C:\Users\archi\project\ai-bug-predictor\venv\Lib\site-packages\sklearn\base.py:463: InconsistentVersionWarning: Trying to unpickle estimator Pipeline from version 1.5.1 when using version 1.8.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+  Bug type classifier: loaded from cache
+
+  Dataset summary  →  1995 files  |  968 buggy
+  Bug type distribution (buggy files only):
+    race_condition         366  ( 37.8%)  ███████████████
+    resource               345  ( 35.6%)  ██████████████
+    type_error             161  ( 16.6%)  ██████
+    memory_leak             49  (  5.1%)  ██
+    exception               18  (  1.9%)  █
+    performance             15  (  1.5%)  █
+    security                14  (  1.4%)  █
+
+  ⚠  28 filename(s) shared across repos (verify no label leak):
+     __init__.py                         → {'httpx', 'celery', 'flask', 'sqlalchemy', 'requests', 'fastapi'}
+     api.py                              → {'requests', 'sqlalchemy'}
+     app.py                              → {'flask', 'celery'}
+     base.py                             → {'fastapi', 'httpx', 'celery', 'sqlalchemy'}
+     cli.py                              → {'flask', 'fastapi'}
+     collections.py                      → {'celery', 'sqlalchemy'}
+
+════════════════════════════════════════════════════════════════════════
+  STAGE 3  ·  CROSS-PROJECT MODEL TRAINING
+════════════════════════════════════════════════════════════════════════
+
+Selecting global feature set (RFE on full data)...
+  Temporal validation: using 1995 files sorted by last change date
+  RFE: kept 25, dropped 16 (threshold='median')
+    Dropped: ['avg_complexity', 'language_id', 'has_test_file', 'complexity_density', 'complexity_per_function', 'loc_per_function', 'commits_2w', 'commits_1m', 'commits_3m', 'recent_churn_ratio', 'recent_activity_score', 'ownership', 'low_history_flag', 'minor_contributor_ratio', 'file_age_bucket', 'burst_ratio']
+    Rescued sparse features from RFE: ['coupled_recent_missing', 'coupling_risk', 'recent_commit_burst', 'recent_bug_flag']
+  Global feature set (25 cols): ['loc', 'max_complexity', 'functions', 'avg_params', 'max_function_length', 'complexity_vs_baseline', 'commits', 'lines_added', 'lines_deleted', 'max_added', 'author_count', 'instability_score', 'avg_commit_size', 'max_commit_ratio', 'days_since_last_change', 'recency_ratio', 'max_coupling_strength', 'coupled_file_count', 'commit_burst_score', 'bug_recency_score', 'temporal_bug_memory', 'coupled_recent_missing', 'coupling_risk', 'recent_commit_burst', 'recent_bug_flag']
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\requests
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1978 files sorted by last change date
+  Temporal validation: using 17 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 980 days ago
+  Data  train=1706 (buggy=853)  test=17 (buggy=3)
+    LR (baseline)                   P=0.273  R=1.000  F1=0.4286  ROC=0.8571  PR-AUC=0.7778
+  Best RF params : {'n_estimators': 100, 'min_samples_split': 5, 'min_samples_leaf': 8, 'max_samples': 0.6, 'max_depth': 8}
+    RF                              P=0.273  R=1.000  F1=0.4286  ROC=0.7381  PR-AUC=0.5576
+  Best XGB params: {'subsample': 0.7, 'n_estimators': 200, 'max_depth': 5, 'learning_rate': 0.1, 'colsample_bytree': 0.7}
+    XGB                             P=0.273  R=1.000  F1=0.4286  ROC=0.8571  PR-AUC=0.6806
+  → Best: LR  F1=0.4286
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\flask
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1972 files sorted by last change date
+  Temporal validation: using 23 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 977 days ago
+  Data  train=1744 (buggy=872)  test=23 (buggy=20)
+    LR (baseline)                   P=1.000  R=0.800  F1=0.8889  ROC=0.9167  PR-AUC=0.9887
+  Best RF params : {'n_estimators': 300, 'min_samples_split': 20, 'min_samples_leaf': 2, 'max_samples': 0.6, 'max_depth': 8}
+    RF                              P=1.000  R=1.000  F1=1.0000  ROC=1.0000  PR-AUC=1.0000
+  Best XGB params: {'subsample': 0.7, 'n_estimators': 300, 'max_depth': 7, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
+    XGB                             P=1.000  R=1.000  F1=1.0000  ROC=1.0000  PR-AUC=1.0000
+  → Best: RF  F1=1.0000
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\fastapi
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1949 files sorted by last change date
+  Temporal validation: using 46 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 2691 days ago
+  Data  train=1694 (buggy=847)  test=46 (buggy=23)
+    LR (baseline)                   P=0.950  R=0.826  F1=0.8837  ROC=0.9735  PR-AUC=0.9762
+  Best RF params : {'n_estimators': 100, 'min_samples_split': 5, 'min_samples_leaf': 8, 'max_samples': 0.6, 'max_depth': 4}
+    RF                              P=1.000  R=0.913  F1=0.9545  ROC=1.0000  PR-AUC=1.0000
+  Best XGB params: {'subsample': 0.7, 'n_estimators': 300, 'max_depth': 7, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
+    XGB                             P=1.000  R=1.000  F1=1.0000  ROC=1.0000  PR-AUC=1.0000
+  → Best: XGB  F1=1.0000
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\httpx
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1986 files sorted by last change date
+  Temporal validation: using 9 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 786 days ago
+  Data  train=1730 (buggy=865)  test=9 (buggy=6)
+    LR (baseline)                   P=0.750  R=1.000  F1=0.8571  ROC=0.9444  PR-AUC=0.9762
+  Best RF params : {'n_estimators': 100, 'min_samples_split': 5, 'min_samples_leaf': 8, 'max_samples': 0.7, 'max_depth': 6}
+    RF                              P=0.857  R=1.000  F1=0.9231  ROC=1.0000  PR-AUC=1.0000
+  Best XGB params: {'subsample': 0.7, 'n_estimators': 300, 'max_depth': 7, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
+    XGB                             P=0.857  R=1.000  F1=0.9231  ROC=1.0000  PR-AUC=1.0000
+  → Best: RF  F1=0.9231
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\celery
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1787 files sorted by last change date
+  Temporal validation: using 208 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 3650 days ago
+  Data  train=1626 (buggy=813)  test=208 (buggy=136)
+    LR (baseline)                   P=0.973  R=0.787  F1=0.8699  ROC=0.9573  PR-AUC=0.9751
+  Best RF params : {'n_estimators': 100, 'min_samples_split': 20, 'min_samples_leaf': 2, 'max_samples': 0.7, 'max_depth': 4}
+    RF                              P=0.953  R=0.890  F1=0.9202  ROC=0.9753  PR-AUC=0.9847
+  Best XGB params: {'subsample': 1.0, 'n_estimators': 100, 'max_depth': 7, 'learning_rate': 0.05, 'colsample_bytree': 1.0}
+    XGB                             P=0.929  R=0.956  F1=0.9420  ROC=0.9720  PR-AUC=0.9846
+  → Best: XGB  F1=0.9420
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\sqlalchemy
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1785 files sorted by last change date
+  Temporal validation: using 210 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 955 days ago
+  Data  train=1690 (buggy=845)  test=210 (buggy=169)
+    LR (baseline)                   P=0.920  R=0.888  F1=0.9036  ROC=0.9112  PR-AUC=0.9761
+  Best RF params : {'n_estimators': 100, 'min_samples_split': 5, 'min_samples_leaf': 2, 'max_samples': 0.7, 'max_depth': 6}
+    RF                              P=0.913  R=0.994  F1=0.9518  ROC=0.9144  PR-AUC=0.9713
+  Best XGB params: {'subsample': 0.8, 'n_estimators': 200, 'max_depth': 7, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
+    XGB                             P=0.918  R=0.988  F1=0.9516  ROC=0.9117  PR-AUC=0.9736
+  → Best: RF  F1=0.9518
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\express
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1988 files sorted by last change date
+  Temporal validation: using 7 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 3650 days ago
+  Data  train=1732 (buggy=866)  test=7 (buggy=6)
+    LR (baseline)                   P=1.000  R=1.000  F1=1.0000  ROC=1.0000  PR-AUC=1.0000
+  Best RF params : {'n_estimators': 300, 'min_samples_split': 5, 'min_samples_leaf': 2, 'max_samples': 0.8, 'max_depth': 6}
+    RF                              P=1.000  R=1.000  F1=1.0000  ROC=1.0000  PR-AUC=1.0000
+  Best XGB params: {'subsample': 1.0, 'n_estimators': 300, 'max_depth': 7, 'learning_rate': 0.1, 'colsample_bytree': 0.8}
+    XGB                             P=1.000  R=1.000  F1=1.0000  ROC=1.0000  PR-AUC=1.0000
+  → Best: LR  F1=1.0000
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\axios
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\guava']
+  Temporal validation: using 1925 files sorted by last change date
+  Temporal validation: using 70 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 2 days ago, Test oldest: 1401 days ago
+  Data  train=1732 (buggy=866)  test=70 (buggy=55)
+    LR (baseline)                   P=0.887  R=0.855  F1=0.8704  ROC=0.8182  PR-AUC=0.9436
+  Best RF params : {'n_estimators': 300, 'min_samples_split': 5, 'min_samples_leaf': 4, 'max_samples': 0.8, 'max_depth': 8}
+    RF                              P=0.913  R=0.764  F1=0.8317  ROC=0.8145  PR-AUC=0.9331
+  Best XGB params: {'subsample': 0.8, 'n_estimators': 100, 'max_depth': 7, 'learning_rate': 0.05, 'colsample_bytree': 0.8}
+    XGB                             P=0.904  R=0.855  F1=0.8785  ROC=0.7952  PR-AUC=0.9228
+  → Best: XGB  F1=0.8785
+
+============================================================
+TEST PROJECT : C:\Users\archi\project\ai-bug-predictor\dataset\guava
+TRAIN        : ['C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\requests', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\flask', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\fastapi', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\httpx', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\celery', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\sqlalchemy', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\express', 'C:\\Users\\archi\\project\\ai-bug-predictor\\dataset\\axios']
+  Temporal validation: using 590 files sorted by last change date
+  Temporal validation: using 1405 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 3287 days ago
+  Data  train=736 (buggy=368)  test=1405 (buggy=550)
+    LR (baseline)                   P=0.697  R=0.798  F1=0.7441  ROC=0.8671  PR-AUC=0.8193
+  Best RF params : {'n_estimators': 300, 'min_samples_split': 5, 'min_samples_leaf': 2, 'max_samples': 0.6, 'max_depth': 8}
+    RF                              P=0.646  R=0.907  F1=0.7549  ROC=0.8991  PR-AUC=0.8436
+  Best XGB params: {'subsample': 1.0, 'n_estimators': 100, 'max_depth': 7, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
+    XGB                             P=0.616  R=0.936  F1=0.7431  ROC=0.8867  PR-AUC=0.8229
+  → Best: RF  F1=0.7549
+
+========================================================================
+  CROSS-PROJECT EVALUATION SUMMARY
+========================================================================
+  Fold         Model  N     Bug   P      R      F1     ROC    PR-AUC   Rec@10
+  --------------------------------------------------------------------------------
+  requests     LR     17    3     0.273  1.000  0.429  0.857  0.778    1.000
+  flask        RF     23    20    1.000  1.000  1.000  1.000  1.000    0.500
+  fastapi      XGB    46    23    1.000  1.000  1.000  1.000  1.000    0.435
+  httpx        RF     9     6     0.857  1.000  0.923  1.000  1.000    1.000
+  celery       XGB    208   136   0.929  0.956  0.942  0.972  0.985    0.074
+  sqlalchemy   RF     210   169   0.913  0.994  0.952  0.914  0.971    0.059
+  express      LR     7     6     1.000  1.000  1.000  1.000  1.000    1.000
+  axios        XGB    70    55    0.904  0.855  0.879  0.795  0.923    0.182
+  guava        RF     1405  550   0.646  0.907  0.755  0.899  0.844    0.018
+  --------------------------------------------------------------------------------
+  Average                         0.836  0.968  0.875  0.938  0.944    0.474
+================================================================================
+
+  SUMMARY METRICS:
+  Precision: 0.836  (target: >0.85)
+  Recall:    0.968  (target: >0.80)
+  F1-Score:  0.875  (target: >0.85)
+  ROC-AUC:   0.938  (target: >0.90)
+  PR-AUC:    0.944  (target: >0.85)
+  Defects@20%: 31.5%  (target: >80%)
+
+BEST ARCHITECTURE: XGB (avg F1=0.8741 across 9 folds)
+Retraining on full dataset...
+  Temporal validation: using 1995 files sorted by last change date
+Using deeper XGBoost for smoother probability output...
+  Calibrating probabilities (sigmoid)...
+  Calibration  pred=0.717  actual=0.717  Brier=0.0858  ✓ well-calibrated
+  Calibration curve saved → model/calibration_curve.png
+Model saved → C:\Users\archi\project\ai-bug-predictor\model\bug_predictor_v1_20260425_145005.pkl
+Latest alias updated → C:\Users\archi\project\ai-bug-predictor\model\bug_predictor_latest.pkl
+Training log updated → C:\Users\archi\project\ai-bug-predictor\model\training_log.jsonl
+Model expects 25 feature(s): ['loc', 'max_complexity', 'functions', 'avg_params', 'max_function_length', 'complexity_vs_baseline', 'commits', 'lines_added', 'lines_deleted', 'max_added', 'author_count', 'instability_score', 'avg_commit_size', 'max_commit_ratio', 'days_since_last_change', 'recency_ratio', 'max_coupling_strength', 'coupled_file_count', 'commit_burst_score', 'bug_recency_score', 'temporal_bug_memory', 'coupled_recent_missing', 'coupling_risk', 'recent_commit_burst', 'recent_bug_flag']
+  Scaler persisted inside model artifact
+
+════════════════════════════════════════════════════════════════════════
+  STAGE 4  ·  RISK PREDICTION
+════════════════════════════════════════════════════════════════════════
+
+Computing SHAP values...
+Saving global SHAP plots...
+  Saved → C:\Users\archi\project\ai-bug-predictor\explainability\plots/global_bar.png
+  Saved → C:\Users\archi\project\ai-bug-predictor\explainability\plots/global_beeswarm.png
+Saving local SHAP plots for top 5 risky files...
+
+════════════════════════════════════════════════════════════════════════
+  GITSENTINEL  ·  FINAL RISK REPORT
+════════════════════════════════════════════════════════════════════════
+
+  ┌─ requests  (17 files │ 3 buggy │ 4 flagged risky)
+  │    90%  [BUG]  CRITICAL  setup.py                                resource          · This strong bug memory (0.752),…
+  │    83%  [BUG]  CRITICAL  src\requests\utils.py                   resource          · This strong bug memory (2.834),…
+  │             ↳  should_bypass_proxies           cx= 17  len=  59
+  │             ↳  super_len                       cx= 16  len=  69
+  │    82%  [   ]  CRITICAL  src\requests\adapters.py                unknown           · This strong bug memory (0.741),…
+  │             ↳  send                            cx= 19  len= 107
+  │             ↳  cert_verify                     cx= 14  len=  55
+  │    50%  [BUG]  MODERATE  src\requests\exceptions.py              resource          · This strong bug memory (0.787),…
+  │             ↳  __init__                        cx=  4  len=   8
+  │             ↳  __init__                        cx=  1  len=   9
+  │    28%  [   ]  LOW       src\requests\sessions.py                unknown           · This strong bug memory (0.741),…
+  │             ↳  resolve_redirects               cx= 15  len= 121
+  │             ↳  send                            cx= 11  len=  76
+  │    23%  [   ]  LOW       src\requests\models.py                  unknown           · This strong bug memory (0.741),…
+  │             ↳  _encode_files                   cx= 21  len=  67
+  │             ↳  prepare_url                     cx= 17  len=  73
+  │    18%  [   ]  LOW       src\requests\certs.py                   unknown           · This strong bug memory (0.741),…
+  │    16%  [   ]  LOW       src\requests\auth.py                    unknown           · This strong bug memory (0.741),…
+  │             ↳  build_digest_header             cx= 19  len= 109
+  │             ↳  _basic_auth_str                 cx=  5  len=  42
+  │    15%  [   ]  LOW       src\requests\__init__.py                unknown           · This strong bug memory (0.741),…
+  │             ↳  check_compatibility             cx=  5  len=  33
+  │             ↳  _check_cryptography             cx=  3  len=  12
+  │    14%  [   ]  LOW       src\requests\help.py                    unknown           · This strong bug memory (0.741),…
+  │             ↳  _implementation                 cx=  6  len=  30
+  │             ↳  info                            cx=  6  len=  57
+
+  ┌─ flask  (23 files │ 20 buggy │ 20 flagged risky)
+  │    90%  [BUG]  CRITICAL  src\flask\helpers.py                    resource          · This strong bug memory (1.320),…
+  │             ↳  get_root_path                   cx=  9  len=  55
+  │             ↳  get_flashed_messages            cx=  6  len=  40
+  │    90%  [BUG]  CRITICAL  src\flask\app.py                        resource          · This strong bug memory (2.766),…
+  │             ↳  make_response                   cx= 16  len= 141
+  │             ↳  run                             cx= 13  len= 122
+  │    90%  [BUG]  CRITICAL  src\flask\ctx.py                        resource          · This strong bug memory (0.815),…
+  │             ↳  pop                             cx=  7  len=  59
+  │             ↳  _get_session                    cx=  4  len=  13
+  │    90%  [BUG]  CRITICAL  src\flask\json\__init__.py              type_error        · This strong bug memory (0.005),…
+  │             ↳  dumps                           cx=  2  len=  32
+  │             ↳  dump                            cx=  2  len=  28
+  │    90%  [BUG]  CRITICAL  src\flask\sansio\app.py                 resource          · This strong bug memory (1.630),…
+  │             ↳  add_url_rule                    cx= 13  len=  57
+  │             ↳  _find_error_handler             cx=  7  len=  24
+  │    90%  [BUG]  CRITICAL  src\flask\blueprints.py                 resource          · This strong bug memory (0.180),…
+  │             ↳  get_send_file_max_age           cx=  3  len=  26
+  │             ↳  open_resource                   cx=  3  len=  25
+  │    90%  [BUG]  CRITICAL  src\flask\config.py                     resource          · This strong bug memory (0.007),…
+  │             ↳  from_prefixed_env               cx=  7  len=  60
+  │             ↳  from_file                       cx=  5  len=  47
+  │    90%  [BUG]  CRITICAL  src\flask\sessions.py                   resource          · This strong bug memory (0.406),…
+  │             ↳  save_session                    cx=  5  len=  49
+  │             ↳  open_session                    cx=  4  len=  13
+  │    90%  [BUG]  CRITICAL  src\flask\views.py                      resource          · This strong bug memory (0.128),…
+  │             ↳  __init_subclass__               cx=  7  len=  16
+  │             ↳  as_view                         cx=  4  len=  50
+  │    90%  [BUG]  CRITICAL  src\flask\__init__.py                   resource          · This high commit history (1 changes),…
+
+  ┌─ fastapi  (46 files │ 23 buggy │ 23 flagged risky)
+  │    90%  [BUG]  CRITICAL  fastapi\utils.py                        type_error        · This strong bug memory (1.040),…
+  │             ↳  deep_dict_update                cx=  8  len=  16
+  │             ↳  is_body_allowed_for_status_code  cx=  4  len=  15
+  │    90%  [BUG]  CRITICAL  fastapi\dependencies\utils.py           resource          · This strong bug memory (11.482),…
+  │             ↳  analyze_param                   cx= 39  len= 167
+  │             ↳  solve_dependencies              cx= 25  len= 138
+  │    90%  [BUG]  CRITICAL  fastapi\encoders.py                     resource          · This strong bug memory (1.624),…
+  │             ↳  jsonable_encoder                cx= 34  len= 236
+  │             ↳  decimal_encoder                 cx=  3  len=  23
+  │    90%  [BUG]  CRITICAL  fastapi\openapi\models.py               type_error        · This strong bug memory (0.043),…
+  │             ↳  __get_validators__              cx=  1  len=   2
+  │             ↳  validate                        cx=  1  len=   6
+  │    90%  [BUG]  CRITICAL  fastapi\openapi\utils.py                resource          · This strong bug memory (3.622),…
+  │             ↳  get_openapi_path                cx= 41  len= 219
+  │             ↳  get_openapi                     cx= 29  len=  93
+  │    90%  [BUG]  CRITICAL  fastapi\routing.py                      resource          · This strong bug memory (3.509),…
+  │             ↳  get_request_handler.app         cx= 29  len= 346
+  │             ↳  __init__                        cx= 27  len= 165
+  │    90%  [BUG]  CRITICAL  fastapi\params.py                       resource          · This strong bug memory (0.778),…
+  │             ↳  __init__                        cx= 11  len= 103
+  │             ↳  __init__                        cx= 11  len= 106
+  │    90%  [BUG]  CRITICAL  fastapi\security\http.py                security          · This strong bug memory (0.206),…
+  │             ↳  __call__                        cx=  7  len=  14
+  │             ↳  __call__                        cx=  7  len=  14
+  │    90%  [BUG]  CRITICAL  fastapi\dependencies\models.py          resource          · This strong bug memory (1.792),…
+  │             ↳  is_coroutine_callable           cx= 13  len=  28
+  │             ↳  is_gen_callable                 cx= 11  len=  24
+  │    90%  [BUG]  CRITICAL  fastapi\applications.py                 type_error        · This strong bug memory (0.638),…
+  │             ↳  setup                           cx=  7  len=  54
+  │             ↳  setup.openapi                   cx=  5  len=  11
+
+  ┌─ httpx  (9 files │ 6 buggy │ 6 flagged risky)
+  │    90%  [BUG]  CRITICAL  httpx\_utils.py                         resource          · This strong bug memory (0.225),…
+  │             ↳  get_environment_proxies         cx= 12  len=  47
+  │             ↳  __init__                        cx=  9  len=  29
+  │    90%  [BUG]  CRITICAL  httpx\_config.py                        resource          · This strong bug memory (0.296),…
+  │             ↳  __init__                        cx= 14  len=  45
+  │             ↳  create_ssl_context              cx= 11  len=  47
+  │    90%  [BUG]  CRITICAL  httpx\__init__.py                       resource          · This high commit history (1 changes),…
+  │             ↳  main                            cx=  1  len=   9
+  │    90%  [BUG]  CRITICAL  httpx\_transports\asgi.py               resource          · This strong bug memory (0.018),…
+  │             ↳  handle_async_request.send       cx=  6  len=  20
+  │             ↳  handle_async_request            cx=  6  len=  89
+  │    90%  [BUG]  CRITICAL  httpx\_transports\default.py            resource          · This strong bug memory (0.364),…
+  │             ↳  map_httpcore_exceptions         cx=  8  len=  23
+  │             ↳  __init__                        cx=  6  len=  80
+  │    90%  [BUG]  CRITICAL  httpx\_transports\wsgi.py               type_error        · This strong bug memory (0.011),…
+  │             ↳  handle_request                  cx=  9  len=  59
+  │             ↳  _skip_leading_empty_chunks      cx=  3  len=   6
+  │     8%  [   ]  LOW       httpx\_transports\__init__.py           unknown           · This strong bug memory (0.000),…
+  │     8%  [   ]  LOW       httpx\_transports\base.py               unknown           · This strong bug memory (0.000),…
+  │             ↳  __enter__                       cx=  1  len=   2
+  │             ↳  __exit__                        cx=  1  len=   7
+  │     0%  [   ]  LOW       httpx\_transports\mock.py               unknown           · This strong bug memory (0.012),…
+  │             ↳  handle_request                  cx=  2  len=   9
+  │             ↳  handle_async_request            cx=  2  len=  15
+
+  ┌─ celery  (208 files │ 136 buggy │ 138 flagged risky)
+  │    90%  [BUG]  CRITICAL  celery\backends\mongodb.py              resource          · This strong bug memory (0.071),…
+  │             ↳  __init__                        cx= 10  len=  59
+  │             ↳  _get_connection                 cx=  7  len=  28
+  │    90%  [BUG]  CRITICAL  celery\worker\loops.py                  resource          · This strong bug memory (3.376),…
+  │             ↳  asynloop                        cx= 12  len=  81
+  │             ↳  synloop                         cx=  8  len=  51
+  │    90%  [BUG]  CRITICAL  celery\app\builtins.py                  resource          · This strong bug memory (0.331),…
+  │             ↳  add_unlock_chord_task.unlock_chord  cx=  9  len=  49
+  │             ↳  add_group_task.group            cx=  5  len=  13
+  │    90%  [BUG]  CRITICAL  celery\bin\base.py                      resource          · This strong bug memory (0.867),…
+  │             ↳  pretty                          cx=  7  len=  14
+  │             ↳  say_chat                        cx=  7  len=   7
+  │    90%  [BUG]  CRITICAL  celery\apps\worker.py                   resource          · This strong bug memory (0.847),…
+  │             ↳  startup_info                    cx= 10  len=  41
+  │             ↳  on_start                        cx=  8  len=  39
+  │    90%  [BUG]  CRITICAL  celery\loaders\base.py                  resource          · This strong bug memory (0.110),…
+  │             ↳  find_related_module             cx=  8  len=  28
+  │             ↳  getarg                          cx=  6  len=  31
+  │    90%  [BUG]  CRITICAL  celery\app\control.py                   resource          · This strong bug memory (0.621),…
+  │             ↳  _prepare                        cx=  7  len=  12
+  │             ↳  revoke_by_stamped_headers       cx=  6  len=  35
+  │    90%  [BUG]  CRITICAL  celery\result.py                        resource          · This strong bug memory (0.464),…
+  │             ↳  join_native                     cx= 12  len=  35
+  │             ↳  get                             cx=  9  len=  79
+  │    90%  [BUG]  CRITICAL  celery\backends\base.py                 resource          · This strong bug memory (2.294),…
+  │             ↳  get_many                        cx= 16  len=  37
+  │             ↳  exception_to_python             cx= 15  len=  70
+  │    90%  [BUG]  CRITICAL  celery\app\task.py                      resource          · This strong bug memory (3.468),…
+  │             ↳  apply                           cx= 19  len=  83
+  │             ↳  apply_async                     cx= 17  len= 173
+
+  ┌─ sqlalchemy  (210 files │ 169 buggy │ 175 flagged risky)
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\dialects\postgresql\psycopg2.py  resource          · This strong bug memory (0.143),…
+  │             ↳  __init__                        cx=  8  len=  39
+  │             ↳  on_connect                      cx=  8  len=  51
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\dialects\mysql\mysqldb.py  resource          · This strong bug memory (0.313),…
+  │             ↳  create_connect_args             cx=  6  len=  52
+  │             ↳  _parse_dbapi_version            cx=  4  len=   6
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\dialects\mysql\mysqlconnector.py  type_error        · This strong bug memory (0.585),…
+  │             ↳  _mysqlconnector_version_info    cx=  6  len=   6
+  │             ↳  is_disconnect                   cx=  4  len=  20
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\orm\session.py           resource          · This strong bug memory (2.371),…
+  │             ↳  get_bind                        cx= 25  len= 158
+  │             ↳  _get_impl                       cx= 24  len= 122
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\util\compat.py           resource          · This strong bug memory (0.791),…
+  │             ↳  inspect_formatargspec           cx= 15  len=  70
+  │             ↳  inspect_getfullargspec          cx=  6  len=  36
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\dialects\postgresql\json.py  type_error        · This strong bug memory (0.669),…
+  │             ↳  _processor.process              cx=  4  len=  14
+  │             ↳  __init__                        cx=  2  len=  28
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\dialects\postgresql\base.py  type_error        · This strong bug memory (1.267),…
+  │             ↳  _reflect_type                   cx= 31  len= 153
+  │             ↳  get_multi_indexes               cx= 30  len= 159
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\sql\elements.py          type_error        · This strong bug memory (1.089),…
+  │             ↳  __init__                        cx= 19  len= 102
+  │             ↳  _gen_tq_label                   cx= 15  len=  57
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\engine\base.py           resource          · This strong bug memory (1.108),…
+  │             ↳  _handle_dbapi_exception         cx= 32  len= 144
+  │             ↳  _exec_single_context            cx= 28  len= 141
+  │    90%  [BUG]  CRITICAL  lib\sqlalchemy\sql\selectable.py        type_error        · This strong bug memory (1.436),…
+  │             ↳  _generate_columns_plus_names    cx= 23  len= 167
+  │             ↳  _normalize_froms                cx= 16  len=  54
+
+  ┌─ express  (7 files │ 6 buggy │ 6 flagged risky)
+  │    90%  [BUG]  CRITICAL  lib\application.js                      resource          · This strong bug memory (0.304),…
+  │             ↳  render                          cx= 10  len=  54
+  │             ↳  use                             cx=  6  len=  55
+  │    90%  [BUG]  CRITICAL  lib\request.js                          resource          · This strong bug memory (0.679),…
+  │             ↳  header                          cx=  6  len=  20
+  │             ↳  (anonymous)                     cx=  6  len=  15
+  │    90%  [BUG]  CRITICAL  lib\utils.js                            resource          · This strong bug memory (0.129),…
+  │             ↳  exports.compileETag             cx=  6  len=  23
+  │             ↳  compileQueryParser              cx=  6  len=  23
+  │    90%  [BUG]  CRITICAL  lib\response.js                         resource          · This strong bug memory (0.782),…
+  │             ↳  send                            cx= 22  len=  94
+  │             ↳  res.cookie                      cx=  8  len=  34
+  │    90%  [BUG]  CRITICAL  lib\express.js                          resource          · This high commit history (2 changes),…
+  │             ↳  app                             cx=  1  len=   3
+  │             ↳  createApplication               cx=  1  len=  21
+  │    89%  [BUG]  CRITICAL  lib\view.js                             resource          · This high commit history (1 changes),…
+  │             ↳  View                            cx=  8  len=  44
+  │             ↳  resolve                         cx=  5  len=  19
+  │     8%  [   ]  LOW       index.js                                unknown           · This strong bug memory (0.000),…
+
+  ┌─ axios  (70 files │ 55 buggy │ 55 flagged risky)
+  │    90%  [BUG]  CRITICAL  lib\adapters\xhr.js                     resource          · This strong bug memory (1.534),…
+  │             ↳  dispatchXhrRequest              cx= 18  len= 206
+  │             ↳  onloadend                       cx=  6  len=  36
+  │    90%  [BUG]  CRITICAL  lib\axios.js                            resource          · This strong bug memory (0.846),…
+  │             ↳  axios.formToJSON                cx=  2  len=   1
+  │             ↳  create                          cx=  1  len=   3
+  │    90%  [BUG]  CRITICAL  lib\core\dispatchRequest.js             resource          · This strong bug memory (0.807),…
+  │             ↳  throwIfCancellationRequested    cx=  4  len=   9
+  │             ↳  onAdapterRejection              cx=  4  len=  17
+  │    90%  [BUG]  CRITICAL  index.d.ts                              type_error        · This strong bug memory (7.376),…
+  │             ↳  (anonymous)                     cx=  1  len=   1
+  │             ↳  AxiosHeaderParser               cx=  1  len=   1
+  │    90%  [BUG]  CRITICAL  lib\core\Axios.js                       resource          · This strong bug memory (4.465),…
+  │             ↳  unshiftRequestInterceptors      cx=  7  len=  17
+  │             ↳  (anonymous)                     cx=  3  len=   9
+  │    90%  [BUG]  CRITICAL  lib\utils.js                            resource          · This strong bug memory (4.917),…
+  │             ↳  assignValue                     cx= 12  len=  17
+  │             ↳  toFlatObject                    cx= 12  len=  25
+  │    90%  [BUG]  CRITICAL  lib\core\mergeConfig.js                 type_error        · This strong bug memory (4.217),…
+  │             ↳  computeConfigValue              cx=  9  len=   8
+  │             ↳  getMergedValue                  cx=  5  len=  10
+  │    90%  [BUG]  CRITICAL  lib\adapters\http.js                    resource          · This strong bug memory (14.971),…
+  │             ↳  boundary                        cx= 63  len= 260
+  │             ↳  dispatchHttpRequest             cx= 25  len= 160
+  │    90%  [BUG]  CRITICAL  lib\helpers\toFormData.js               resource          · This strong bug memory (2.085),…
+  │             ↳  defaultVisitor                  cx= 14  len=  45
+  │             ↳  toFormData                      cx= 11  len= 159
+  │    90%  [BUG]  CRITICAL  lib\helpers\buildURL.js                 type_error        · This strong bug memory (1.304),…
+  │             ↳  buildURL                        cx= 11  len=  36
+  │             ↳  encode                          cx=  1  len=   7
+
+  ┌─ guava  (1405 files │ 550 buggy │ 585 flagged risky)
+  │    90%  [BUG]  CRITICAL  guava\src\com\google\common\util\concurrent\AggregateFuture.java  race_condition    · This strong bug memory (0.159),…
+  │             ↳  AggregateFuture::init           cx= 10  len=  68
+  │             ↳  AggregateFuture::handleException  cx=  5  len=  33
+  │    90%  [BUG]  CRITICAL  android\guava\src\com\google\common\util\concurrent\ExecutionSequencer.java  memory_leak       · This strong bug memory (0.211),…
+  │             ↳  ThreadConfinedTaskQueue::submitAsync  cx=  5  len=  90
+  │             ↳  TaskNonReentrantExecutor::run   cx=  4  len=  65
+  │    90%  [BUG]  CRITICAL  guava\src\com\google\common\util\concurrent\ExecutionSequencer.java  memory_leak       · This strong bug memory (0.211),…
+  │             ↳  ThreadConfinedTaskQueue::submitAsync  cx=  5  len=  90
+  │             ↳  TaskNonReentrantExecutor::run   cx=  4  len=  65
+  │    90%  [BUG]  CRITICAL  android\guava\src\com\google\common\util\concurrent\AggregateFuture.java  race_condition    · This strong bug memory (0.159),…
+  │             ↳  AggregateFuture::init           cx= 10  len=  68
+  │             ↳  AggregateFuture::handleException  cx=  5  len=  33
+  │    90%  [BUG]  CRITICAL  guava\src\com\google\common\graph\ValueGraph.java  race_condition    · This strong bug memory (0.083),…
+  │    90%  [BUG]  CRITICAL  guava\src\com\google\common\base\Splitter.java  race_condition    · This strong bug memory (0.200),…
+  │             ↳  SplittingIterator::computeNext  cx= 14  len=  64
+  │             ↳  (anonymous)::separatorStart     cx=  4  len=  14
+  │    90%  [BUG]  CRITICAL  guava\src\com\google\common\util\concurrent\AbstractFuture.java  race_condition    · This strong bug memory (3.190),…
+  │             ↳  DelegatingToFuture::getFutureValue  cx= 14  len=  74
+  │             ↳  DelegatingToFuture::cancel      cx= 10  len=  67
+  │    90%  [BUG]  CRITICAL  android\guava\src\com\google\common\util\concurrent\AbstractFuture.java  race_condition    · This strong bug memory (3.190),…
+  │             ↳  DelegatingToFuture::getFutureValue  cx= 14  len=  74
+  │             ↳  DelegatingToFuture::cancel      cx= 10  len=  67
+  │    90%  [BUG]  CRITICAL  guava\src\com\google\common\graph\BaseGraph.java  race_condition    · This strong bug memory (0.083),…
+  │    90%  [BUG]  CRITICAL  android\guava\src\com\google\common\graph\Network.java  race_condition    · This strong bug memory (0.083),…
+
+════════════════════════════════════════════════════════════════════════
+
+════════════════════════════════════════════════════════════════════════
+  STAGE 6  ·  COMMIT RISK SIMULATION
+════════════════════════════════════════════════════════════════════════
+
+  Simulated changed files (3):
+    • worker.py
+    • AbstractCompositeHashFunction.java
+    • concurrency.py
+
+  Commit risk score : 0.85  [CRITICAL]
+  Highest-risk file : concurrency.py  →  90.0%
+
+════════════════════════════════════════════════════════════════════════
+  STAGE 7  ·  ABLATION STUDY
+════════════════════════════════════════════════════════════════════════
+  Temporal validation: using 1978 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 980 days ago
+  Temporal validation: using 1972 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 977 days ago
+  Temporal validation: using 1949 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 2691 days ago
+  Temporal validation: using 1986 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 786 days ago
+  Temporal validation: using 1787 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 3650 days ago
+  Temporal validation: using 1785 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 955 days ago
+  Temporal validation: using 1988 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 3650 days ago
+  Temporal validation: using 1925 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 2 days ago, Test oldest: 1401 days ago
+  Temporal validation: using 590 files sorted by last change date
+  ⚠ Temporal validation warning: potential leakage detected
+    Train newest: 0 days ago, Test oldest: 3287 days ago
+
+============================================================
+  ABLATION STUDY
+============================================================
+  Model  Feature Set      n_cols   Avg F1     Avg PR-AUC
+  --------------------------------------------------------
+  LR     Static-only      10       0.7665     0.8088
+  LR     Git-only         29       0.8199     0.9354
+  LR     RFE-selected     25       0.8300     0.9406
+  LR     All-combined     41       0.8146     0.9379
+  RF     Static-only      10       0.7068     0.7917
+  RF     Git-only         29       0.8818     0.9297
+  RF     RFE-selected     25       0.8667     0.9399
+  RF     All-combined     41       0.8561     0.8939
+
+  SMOTETomek Comparison (vs SMOTE):
+  ----------------------------------------
+  Testing SMOTETomek on best config: RF + Git-only
+  Temporal validation: using 1978 files sorted by last change date
+  Temporal validation: using 1972 files sorted by last change date
+  Temporal validation: using 1949 files sorted by last change date
+  Temporal validation: using 1986 files sorted by last change date
+  Temporal validation: using 1787 files sorted by last change date
+  Temporal validation: using 1785 files sorted by last change date
+  Temporal validation: using 1988 files sorted by last change date
+  Temporal validation: using 1925 files sorted by last change date
+  Temporal validation: using 590 files sorted by last change date
+  SMOTE:      F1=0.8818, PR-AUC=0.9297, Brier=0.0914
+  SMOTETomek: F1=0.8732, PR-AUC=0.9243, Brier=0.0845
+  Δ F1: -0.0086, Δ PR-AUC: -0.0054, Δ Brier: +0.0069
+  ✗ KEEP: SMOTE remains preferred (gains too small/noisy)
+
+════════════════════════════════════════════════════════════════════════
+  PIPELINE COMPLETE
+════════════════════════════════════════════════════════════════════════

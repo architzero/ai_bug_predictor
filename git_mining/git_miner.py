@@ -374,7 +374,8 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
             (now - d["last_bug_date"]).days if d["last_bug_date"] else -1
         )
 
-        d["bug_fix_ratio"] = d["past_bug_count"] / commits
+        # NOTE: bug_fix_ratio, past_bug_count, days_since_last_bug are NO LONGER
+        # added to the output dict - they were data leakage features derived from labels
 
         # -------- Change Burst Features --------
         d["commit_burst_score"] = 0.0

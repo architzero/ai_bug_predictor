@@ -44,6 +44,26 @@ REPOS = [
     os.path.join(DATASET_DIR, "guava"),
 ]
 
+# ── Skip Patterns (Shared across analyzer and SZZ) ────────────────────────────
+# CRITICAL: Single source of truth for directories/files to exclude from analysis.
+# Used by both static_analysis/analyzer.py and git_mining/szz_labeler.py to ensure
+# consistent file filtering and prevent SZZ from labeling files that analyzer never scores.
+
+SKIP_DIR_PATTERNS = [
+    "docs_src", "docs", "examples", "example",
+    "node_modules", "vendor", "dist", "build",
+    ".venv", "venv", "env", "__pycache__",
+    "migrations", "coverage", "generated", "__generated__",
+    "scripts", "test", "tests", "spec", "testing",
+    ".git", ".github", ".husky",
+]
+
+SKIP_FILE_PATTERNS = [
+    ".min.js", ".min.css",  # Minified files
+    "_pb2.py", ".pb.go",     # Protocol buffer generated files
+    ".lock", ".log",         # Lock and log files
+]
+
 # ── Git mining ─────────────────────────────────────────────────────────────────
 RECENT_DAYS_2W = 14
 RECENT_DAYS_1M = 30

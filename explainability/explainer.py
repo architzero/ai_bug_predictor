@@ -5,7 +5,40 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from functools import lru_cache
 from config import PLOTS_DIR
+
+
+# Global SHAP explainer cache to avoid recomputation
+_SHAP_EXPLAINER_CACHE = {}
+
+
+def _get_model_hash(model):
+    """Generate a hash for the model to use as cache key."""
+    try:
+        # Use model's memory address as a simple hash
+        return str(id(model))
+    except Exception:
+        return "default"
+
+
+def _get_cached_explainer(model, X_sample):
+    """Get or create SHAP explainer with caching."""
+    model_hash = _get_model_hash(model)
+    
+    if model_hash in _SHAP_EXPLAINER_CACHE:
+        return _SHAP_EXPLAINER_CACHE[model_hash]
+    
+    # Create new explainer
+    try:
+        explainer = shap.TreeExplainer(model)
+        _SHAP_EXPLAINER_CACHE[model_hash] = explainer
+        return explainer
+    except Exception:
+        # Fallback to KernelExplainer
+        explainer = shap.KernelExplainer(model.predict, X_sample[:10])
+        _SHAP_EXPLAINER_CACHE[model_hash] = explainer
+        return explainer
 
 
 NON_FEATURE_COLS = [
@@ -71,9 +104,9 @@ def _get_scaler(model):
 
 def _compute_shap(model, X):
     """
-    Compute SHAP values using the appropriate explainer.
+    Compute SHAP values using the appropriate explainer with caching.
     - LR  → LinearExplainer
-    - RF / XGBoost → TreeExplainer
+    - RF / XGBoost → TreeExplainer (cached)
 
     CRITICAL: for Pipeline models, X must be transformed through the
     scaler before passing to TreeExplainer, because the tree model was
@@ -121,7 +154,7 @@ def _compute_shap(model, X):
         ev = float(ev[0]) if hasattr(ev, "__len__") else float(ev)
         return shap_vals, ev, X   # X_display = original
 
-    # RF / XGBoost - use TreeExplainer (on scaled data if scaler exists)
+    # RF / XGBoost - use TreeExplainer (cached)
     else:
         # For tree models, ensure we have the raw classifier without calibration
         if hasattr(clf, 'base_estimator'):
@@ -131,16 +164,9 @@ def _compute_shap(model, X):
         else:
             shap_clf = clf
         
-        # Additional check for XGBoost wrapped models
-        if hasattr(shap_clf, 'get_booster'):
-            # XGBoost model - use directly
-            pass
-        elif hasattr(shap_clf, 'estimators_'):
-            # Random Forest - use directly
-            pass
-        
         try:
-            explainer = shap.TreeExplainer(shap_clf)
+            # Use cached explainer for performance
+            explainer = _get_cached_explainer(shap_clf, X_scaled)
             shap_vals = explainer.shap_values(X_scaled)
         except Exception as e:
             print(f"SHAP TreeExplainer failed: {e}")
@@ -151,8 +177,10 @@ def _compute_shap(model, X):
                 shap_vals = explainer.shap_values(X_scaled)
             except Exception as e2:
                 print(f"SHAP KernelExplainer also failed: {e2}")
-                # Return dummy values
-                return np.zeros((len(X_scaled), len(X_scaled.columns))), 0.0, X
+                raise RuntimeError(
+                    f"SHAP explainability failed for this model type. "
+                    f"TreeExplainer error: {e}. KernelExplainer error: {e2}"
+                ) from e2
 
     # list output: [class_0_array, class_1_array] — older SHAP + RF
     if isinstance(shap_vals, list):
@@ -253,6 +281,7 @@ def _explain_feature_human_readable(feature_name, value, shap_value, direction="
         "complexity_density": lambda v: f"High complexity relative to size ({v:.3f}), suggesting dense logic",
         "complexity_per_function": lambda v: f"Functions are overly complex on average ({v:.1f})",
         "complexity_vs_baseline": lambda v: f"Complexity is {v:.1f}x above language baseline, indicating structural issues",
+        "max_nesting_depth": lambda v: f"Deep block nesting detected (depth {v:.0f}), indicating hard-to-follow control flow",
         
         # Size metrics
         "loc": lambda v: f"Large file ({v:.0f} lines), harder to comprehensively review",
@@ -418,3 +447,129 @@ def explain_prediction(model_data, df, save_plots=True, top_local=5):
     result["explanation"] = explanations
 
     return result
+
+
+def generate_counterfactual_explanation(
+    model_data: dict,
+    file_row: pd.Series,
+    risk_threshold: float = 0.40,
+    top_n: int = 3,
+) -> list[dict]:
+    """
+    Generate counterfactual explanations for a single high-risk file.
+
+    Answers the question: "What would need to change for this file's
+    predicted risk to drop below `risk_threshold`?"
+
+    Strategy: greedy single-feature perturbation search.
+    For each numeric feature, simulate reducing it toward the training
+    dataset's median (the 'safe' reference value). Report the features
+    that produce the largest risk drop when moved toward their median.
+
+    Args:
+        model_data : dict with keys 'model', 'features', 'training_stats'
+        file_row   : a single DataFrame row (pd.Series) for the file
+        risk_threshold : target risk to drop below (default 0.40)
+        top_n      : number of counterfactual suggestions to return
+
+    Returns:
+        List of dicts, each with:
+          - feature       : feature name
+          - current_value : current value of that feature
+          - target_value  : value to move toward
+          - risk_before   : original risk probability
+          - risk_after    : simulated risk after perturbation
+          - risk_delta    : reduction in risk (positive = improvement)
+          - action        : human-readable suggestion string
+    """
+    if not isinstance(model_data, dict):
+        return []
+
+    model    = model_data.get("model")
+    features = model_data.get("features", [])
+    stats    = model_data.get("training_stats", {})
+
+    if model is None or not features:
+        return []
+
+    # Build baseline feature vector
+    row_data = {}
+    for feat in features:
+        row_data[feat] = file_row.get(feat, 0)
+
+    baseline_df = pd.DataFrame([row_data])[features]
+
+    try:
+        risk_before = float(model.predict_proba(baseline_df)[0, 1])
+    except Exception:
+        return []
+
+    if risk_before < risk_threshold:
+        return []  # Already below threshold — no counterfactual needed
+
+    # For each numeric feature, perturb toward its training median
+    candidates = []
+    for feat in features:
+        feat_stats = stats.get(feat)
+        if feat_stats is None:
+            continue
+        current = float(row_data.get(feat, 0))
+        # Use midpoint between current and median as the target
+        median_approx = float(feat_stats.get("mean", current))
+        if abs(median_approx - current) < 1e-6:
+            continue
+
+        perturbed = row_data.copy()
+        perturbed[feat] = median_approx
+        perturbed_df = pd.DataFrame([perturbed])[features]
+
+        try:
+            risk_after = float(model.predict_proba(perturbed_df)[0, 1])
+        except Exception:
+            continue
+
+        delta = risk_before - risk_after
+        if delta <= 0.005:  # Ignore negligible changes
+            continue
+
+        # Build a human-readable action string
+        direction = "reduce" if median_approx < current else "increase"
+        action = _counterfactual_action_text(feat, current, median_approx, direction)
+
+        candidates.append({
+            "feature":       feat,
+            "current_value": round(current, 4),
+            "target_value":  round(median_approx, 4),
+            "risk_before":   round(risk_before, 3),
+            "risk_after":    round(risk_after, 3),
+            "risk_delta":    round(delta, 3),
+            "action":        action,
+        })
+
+    # Return top-N by risk reduction
+    candidates.sort(key=lambda x: x["risk_delta"], reverse=True)
+    return candidates[:top_n]
+
+
+def _counterfactual_action_text(feature: str, current: float, target: float, direction: str) -> str:
+    """Convert a feature perturbation into a developer-facing action recommendation."""
+    _ACTION_TEMPLATES = {
+        "avg_complexity":       f"Refactor to reduce average cyclomatic complexity from {current:.1f} toward {target:.1f} (split complex functions)",
+        "max_complexity":       f"Break up the most complex function (current peak: {current:.0f}, target: {target:.0f})",
+        "max_nesting_depth":    f"Flatten deeply nested blocks (current depth: {current:.0f}, target: {target:.0f})",
+        "commits_2w":           f"Reduce commit frequency — {current:.0f} commits in 2 weeks suggests instability",
+        "instability_score":    f"Stabilize the file — instability score {current:.3f} is above healthy range",
+        "minor_contributor_ratio": f"Improve code ownership — {current:.1%} minor contributors, assign a primary owner",
+        "coupling_risk":        f"Reduce coupling — decouple from {current:.0f} tightly bound files",
+        "burst_risk":           f"Avoid commit bursts — concentrated changes increase risk",
+        "author_count":         f"Reduce number of contributors ({current:.0f}) — too many hands causes inconsistency",
+        "loc":                  f"Split this file — {current:.0f} lines is above healthy size",
+        "max_function_length":  f"Break up long functions (max {current:.0f} lines, target {target:.0f})",
+        "recent_churn_ratio":   f"Stabilize — {current:.1%} of changes are very recent, wait before adding more",
+        "temporal_bug_risk":    f"Address historical defects in this file before new changes",
+        "has_test_file":        f"Add a test file — this file has no corresponding unit tests",
+    }
+    if feature in _ACTION_TEMPLATES:
+        return _ACTION_TEMPLATES[feature]
+    return f"{direction.capitalize()} {feature.replace('_', ' ')} from {current:.3f} toward {target:.3f} to reduce defect risk"
+

@@ -49,6 +49,8 @@ if cols_present:
     scaler = StandardScaler()
     df[cols_present] = scaler.fit_transform(df[cols_present])
     print(f"  Global StandardScaler applied  →  {len(cols_present)} git features  |  {len(df)} total files")
+else:
+    scaler = None
 
 df = filter_correlated_features(df)
 
@@ -89,6 +91,15 @@ print("═" * 72)
 
 df_for_ablation = df.copy()
 model = train_model(df, REPOS)
+
+# Attach the training scaler so inference (app_ui.py) applies identical scaling.
+# XGBoost is scale-invariant so this has no effect on tree-based predictions, but
+# it ensures LR/RF fallback paths and future linear layers stay consistent.
+if scaler is not None and isinstance(model, dict):
+    model["scaler"] = scaler
+    import joblib, os
+    joblib.dump(model, os.path.join("model", "bug_predictor_latest.pkl"))
+    print(f"  Scaler persisted inside model artifact")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STAGE 4 — Prediction + Explanations
