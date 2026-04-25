@@ -9,16 +9,25 @@ def _norm_rel(filepath, repo_path):
     """
     Return a normalized (forward-slash, lowercase) relative path.
     Used to match absolute analyzer paths against PyDriller relative paths.
+    
+    CRITICAL: This is the single source of truth for path normalization.
+    Both SZZ and analyzer must use this function to ensure consistent matching.
     """
     try:
         rel = os.path.relpath(filepath, repo_path)
     except ValueError:
         # Different drives on Windows — fall back to basename match
         rel = os.path.basename(filepath)
-    return rel.replace("\\", "/").lower()
+    # Normalize: forward slashes, lowercase, strip leading/trailing slashes
+    return rel.replace("\\", "/").lower().strip("/")
 
 
 def _fuzzy_match(path, buggy_set):
+    """
+    DEPRECATED: This function is no longer used.
+    Replaced by exact path matching in create_labels() using _norm_rel().
+    Kept for backward compatibility only.
+    """
     path = path.replace("\\", "/").lower()
 
     for b in buggy_set:
@@ -58,24 +67,27 @@ def create_labels(df, repo_path, cache_dir=None):
     df = df.copy()
 
     if use_confidence:
-        # Build a basename-keyed lookup for O(1) matching.
+        # Build exact path matching lookup using normalized relative paths.
         # SZZ stores repo-relative paths (e.g. 'src/requests/auth.py');
-        # the DataFrame has absolute paths — we normalise both to relative
-        # inside match_and_confidence().
-        fast_lookup: dict = {}
+        # the DataFrame has absolute paths — we normalize both to relative
+        # using _norm_rel() for exact matching (no more fuzzy basename matching).
+        
+        # Create lookup: normalized_path -> (original_szz_path, confidence)
+        exact_lookup = {}
         for b_path, conf in buggy_confidence.items():
-            b_name = os.path.basename(b_path).lower()
-            if b_name not in fast_lookup:
-                fast_lookup[b_name] = []
-            fast_lookup[b_name].append((b_path.lower(), conf))
+            # SZZ paths are already repo-relative, just normalize them
+            norm_path = b_path.replace("\\", "/").lower().strip("/")
+            exact_lookup[norm_path] = (b_path, conf)
 
         def match_and_confidence(fp):
-            norm_path = _norm_rel(fp, repo_path).lower()
-            fp_name = os.path.basename(norm_path)
-            if fp_name in fast_lookup:
-                for b_path, conf in fast_lookup[fp_name]:
-                    if norm_path.endswith(b_path) or b_path.endswith(norm_path):
-                        return 1, conf
+            # Normalize the analyzer's absolute path to repo-relative
+            norm_path = _norm_rel(fp, repo_path)
+            
+            # Exact match lookup
+            if norm_path in exact_lookup:
+                _, conf = exact_lookup[norm_path]
+                return 1, conf
+            
             return 0, 0.3  # baseline confidence for clean files
 
         df[["buggy", "confidence"]] = df["file"].apply(

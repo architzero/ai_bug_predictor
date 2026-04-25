@@ -1,6 +1,7 @@
 import os
 import lizard
 from pathlib import Path
+from config import SKIP_DIR_PATTERNS, SKIP_FILE_PATTERNS
 
 
 SUPPORTED_EXTENSIONS = {
@@ -41,16 +42,9 @@ def should_exclude(filepath: str) -> bool:
 
 
 def _should_skip_dir(dirpath):
-    """Return True if any path component matches a skip pattern."""
+    """Return True if any path component matches a skip pattern from config.py."""
     parts = dirpath.replace("\\", "/").lower().split("/")
-    skip_patterns = [
-        "docs_src", "docs", "examples", "example",
-        "node_modules", "vendor", "dist", "build",
-        ".venv", "venv", "env", "__pycache__",
-        "migrations", "coverage", "generated", "__generated__",
-        "scripts",
-    ]
-    return any(part in skip_patterns for part in parts)
+    return any(part in SKIP_DIR_PATTERNS for part in parts)
 
 
 def _has_test_file(filepath: str, search_dir: Path) -> bool:
@@ -111,10 +105,53 @@ def empty_metrics(language: str) -> dict:
         "functions": 0,
         "avg_params": 0,
         "max_function_length": 0,
+        "max_nesting_depth": 0,
         "language": language,
         "has_test_file": False,
         "top_functions": []
     }
+
+
+def _max_nesting_depth(filepath: str) -> int:
+    """
+    Compute the maximum block-nesting depth in a Python file via AST.
+    Counts: if/elif/else, for, while, try/except, with, match.
+    Returns 0 for non-Python files or parse errors.
+    
+    Deep nesting (≥5) is strongly correlated with bug-prone code paths
+    and provides a distinct signal from cyclomatic complexity.
+    """
+    if not filepath.endswith(".py"):
+        return 0
+    try:
+        import ast as _ast
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            source = f.read()
+        tree = _ast.parse(source)
+    except Exception:
+        return 0
+
+    _NESTING_NODES = (
+        _ast.If, _ast.For, _ast.While, _ast.Try,
+        _ast.With, _ast.ExceptHandler,
+    )
+    # Python 3.10+: ast.Match
+    try:
+        _NESTING_NODES = _NESTING_NODES + (_ast.Match,)
+    except AttributeError:
+        pass
+
+    def _depth(node, current=0):
+        """Recursively walk AST, tracking nesting level of block statements."""
+        max_d = current
+        for child in _ast.iter_child_nodes(node):
+            if isinstance(child, _NESTING_NODES):
+                max_d = max(max_d, _depth(child, current + 1))
+            else:
+                max_d = max(max_d, _depth(child, current))
+        return max_d
+
+    return _depth(tree)
 
 
 def analyze_file(filepath: str) -> dict | None:
@@ -137,6 +174,9 @@ def analyze_file(filepath: str) -> dict | None:
     # Check for test coverage proxy
     has_test_file = _has_test_file(filepath, Path(filepath).parent)
 
+    # AST-based nesting depth (Python only; 0 for other languages)
+    nesting_depth = _max_nesting_depth(filepath)
+
     return {
         # Same names as before — model contract unchanged
         "file": filepath,
@@ -148,6 +188,8 @@ def analyze_file(filepath: str) -> dict | None:
         "max_function_length": max(lengths),
         "loc_per_function":  sum(lengths) / len(lengths),
         "complexity_density": sum(complexities) / max(result.nloc, 1),
+        # AST-based feature: max block nesting depth (Python; 0 for others)
+        "max_nesting_depth": nesting_depth,
         # New column
         "language":          lang,
         # Test coverage proxy feature

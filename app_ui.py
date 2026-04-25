@@ -808,21 +808,18 @@ def scan_repo_background(scan_id, repo_path):
             scan_progress[scan_id] = {"progress": 0, "status": "Error", "complete": True, "error": "No valid source files or git history found"}
             return
 
-        # Apply saved training scaler if available (Fix #9)
-        # XGBoost is scale-invariant so this is a no-op for the main model;
-        # it matters for consistency if the model ever uses an LR/RF pipeline.
+        # Apply the training scaler for consistent feature normalization at inference.
+        # The scaler is fitted globally on training data and saved inside the model
+        # artifact by main.py. Using fit_transform here would create a distribution
+        # mismatch (per-repo statistics vs global training statistics).
         model_data = app_state["model"]
         _saved_scaler = model_data.get("scaler") if isinstance(model_data, dict) else None
         if _saved_scaler is not None:
             cols_present = [c for c in GIT_FEATURES_TO_NORMALIZE if c in df_repo.columns]
             if cols_present:
                 df_repo[cols_present] = _saved_scaler.transform(df_repo[cols_present])
-        else:
-            from sklearn.preprocessing import StandardScaler
-            cols_present = [c for c in GIT_FEATURES_TO_NORMALIZE if c in df_repo.columns]
-            if cols_present:
-                scaler = StandardScaler()
-                df_repo[cols_present] = scaler.fit_transform(df_repo[cols_present])
+        # If no scaler is saved (model trained before this fix), skip normalization.
+        # XGBoost is scale-invariant so predictions remain valid without scaling.
 
         # Do NOT call filter_correlated_features on an ad-hoc scan — the trained
         # model has a fixed feature list; dropping columns here can silently zero
@@ -1313,6 +1310,202 @@ def api_importance():
     
     importance = pd.Series(mean_abs_shap, index=X_disp.columns).sort_values(ascending=False).head(10)
     return jsonify([{"feature": k, "value": round(float(v), 4)} for k, v in importance.items()])
+
+
+# ── GitHub Webhook — Real-Time PR Risk Assessment ──────────────────────────────
+#
+# Setup:
+#   1. Set GITHUB_WEBHOOK_SECRET in your .env file to any strong random string.
+#   2. In your GitHub repo → Settings → Webhooks → Add webhook:
+#        Payload URL : http://<your-server>/webhook/github
+#        Content type: application/json
+#        Secret      : <same value as GITHUB_WEBHOOK_SECRET>
+#        Events      : Pull requests
+#
+# The endpoint verifies the HMAC-SHA256 signature on every delivery to prevent
+# spoofed payloads, then queues an async risk assessment and posts a comment.
+
+import hmac
+import hashlib
+
+_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+
+
+def _verify_github_signature(payload_bytes: bytes, sig_header: str) -> bool:
+    """Verify X-Hub-Signature-256 header using HMAC-SHA256."""
+    if not _WEBHOOK_SECRET:
+        logger.warning("GITHUB_WEBHOOK_SECRET not set — webhook signature check skipped")
+        return True  # Allow through in dev; fail closed in prod by setting the secret
+    if not sig_header or not sig_header.startswith("sha256="):
+        return False
+    expected = "sha256=" + hmac.new(
+        _WEBHOOK_SECRET.encode("utf-8"),
+        payload_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, sig_header)
+
+
+def _post_pr_comment(owner: str, repo: str, pr_number: int, body: str, token: str) -> bool:
+    """Post a comment to a GitHub PR via the REST API."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+    resp = requests.post(
+        url,
+        headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+        json={"body": body},
+        timeout=10,
+    )
+    return resp.status_code == 201
+
+
+def _webhook_assess_pr(owner: str, repo: str, pr_number: int,
+                        clone_url: str, changed_files: list[str], token: str):
+    """
+    Background thread: run risk assessment for the PR's changed files and
+    post a structured comment back to the PR.
+    """
+    try:
+        df = app_state.get("df")
+        if df is None or df.empty:
+            logger.warning("Webhook: no dataset loaded — skipping risk assessment for PR #%s", pr_number)
+            return
+
+        # Match changed PR filenames against the loaded dataset
+        matched_paths = []
+        for fname in changed_files:
+            for abs_path in df["file"].values:
+                if fname.lower() in abs_path.lower().replace("\\", "/"):
+                    matched_paths.append(abs_path)
+                    break
+
+        if not matched_paths:
+            comment = (
+                f"## 🤖 CodeSentinel Risk Assessment — PR #{pr_number}\n\n"
+                f"⚠️ None of the {len(changed_files)} changed file(s) matched the analyzed dataset.\n"
+                f"Run `python main.py` to update the analysis, then re-open this PR.\n"
+            )
+            _post_pr_comment(owner, repo, pr_number, comment, token)
+            return
+
+        risk_score, risky_df = predict_commit_risk(df, matched_paths)
+
+        # Build risk level label
+        if risk_score >= 0.80:
+            level_badge = "🔴 CRITICAL"
+        elif risk_score >= 0.60:
+            level_badge = "🟠 HIGH"
+        elif risk_score >= 0.40:
+            level_badge = "🟡 MODERATE"
+        else:
+            level_badge = "🟢 LOW"
+
+        lines = [
+            f"## 🤖 CodeSentinel Risk Assessment — PR #{pr_number}",
+            f"",
+            f"**Commit Risk Score: `{risk_score:.0%}` {level_badge}**",
+            f"",
+            f"| File | Risk | Label |",
+            f"|---|---|---|",
+        ]
+
+        top_files = risky_df.sort_values("risk", ascending=False).head(5)
+        for _, row in top_files.iterrows():
+            fname = os.path.basename(str(row["file"]))
+            r     = row.get("risk", 0.0)
+            lbl   = "🐛 Buggy" if int(row.get("buggy", 0)) == 1 else "✅ Clean"
+            icon  = "🔴" if r >= 0.8 else "🟠" if r >= 0.6 else "🟡" if r >= 0.4 else "🟢"
+            lines.append(f"| `{fname}` | {icon} `{r:.0%}` | {lbl} |")
+
+        lines += [
+            f"",
+            f"*{len(matched_paths)} file(s) matched from {len(changed_files)} changed.*",
+            f"*Powered by [CodeSentinel](https://github.com/architzero/ai_bug_predictor)*",
+        ]
+
+        comment = "\n".join(lines)
+        posted = _post_pr_comment(owner, repo, pr_number, comment, token)
+        if posted:
+            logger.info("Webhook: posted risk comment to %s/%s PR #%s (risk=%.2f)", owner, repo, pr_number, risk_score)
+        else:
+            logger.warning("Webhook: failed to post comment to PR #%s", pr_number)
+
+    except Exception as exc:
+        logger.error("Webhook assessment failed for PR #%s: %s", pr_number, exc, exc_info=True)
+
+
+@app.route("/webhook/github", methods=["POST"])
+def github_webhook():
+    """
+    Receive GitHub webhook events and trigger real-time PR risk assessment.
+    Verifies X-Hub-Signature-256, filters pull_request events, posts a
+    risk comment back to the PR asynchronously.
+    """
+    payload_bytes = request.get_data()
+
+    # ── Signature verification ─────────────────────────────────────────────
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    if not _verify_github_signature(payload_bytes, sig_header):
+        logger.warning("Webhook: invalid signature rejected from %s", request.remote_addr)
+        return jsonify({"error": "Invalid signature"}), 401
+
+    # ── Event routing ──────────────────────────────────────────────────────
+    event_type = request.headers.get("X-GitHub-Event", "")
+    if event_type not in ("pull_request", "ping"):
+        return jsonify({"status": "ignored", "event": event_type}), 200
+
+    if event_type == "ping":
+        logger.info("Webhook: ping received — webhook configured successfully")
+        return jsonify({"status": "pong"}), 200
+
+    data = request.get_json(silent=True) or {}
+    action = data.get("action", "")
+
+    # Only assess on PR open or new commits pushed
+    if action not in ("opened", "synchronize", "reopened"):
+        return jsonify({"status": "ignored", "action": action}), 200
+
+    pr        = data.get("pull_request", {})
+    pr_number = pr.get("number")
+    repo_data = data.get("repository", {})
+    owner     = repo_data.get("owner", {}).get("login", "")
+    repo_name = repo_data.get("name", "")
+    clone_url = repo_data.get("clone_url", "")
+
+    if not all([pr_number, owner, repo_name]):
+        return jsonify({"error": "Malformed payload"}), 400
+
+    # Resolve GitHub token (prefer session OAuth token, fall back to env PAT)
+    token = (
+        session.get("github_token")
+        or os.environ.get("GITHUB_TOKEN", "")
+    )
+    if not token:
+        logger.warning("Webhook: no GitHub token available — cannot post PR comment")
+        return jsonify({"status": "no_token"}), 200
+
+    # Fetch changed files from GitHub API
+    try:
+        files_resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files",
+            headers={"Authorization": f"token {token}"},
+            timeout=10,
+        )
+        changed_files = [f["filename"] for f in files_resp.json()] if files_resp.ok else []
+    except Exception:
+        changed_files = []
+
+    # Launch assessment in background — return 200 immediately to GitHub
+    thread = threading.Thread(
+        target=_webhook_assess_pr,
+        args=(owner, repo_name, pr_number, clone_url, changed_files, token),
+        daemon=True,
+    )
+    thread.start()
+
+    logger.info("Webhook: queued assessment for %s/%s PR #%s (%d files)", owner, repo_name, pr_number, len(changed_files))
+    return jsonify({"status": "queued", "pr": pr_number}), 202
+
+
 
 
 if __name__ == "__main__":

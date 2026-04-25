@@ -177,14 +177,19 @@ def _get_xy(df):
 
 
 def _print_metrics(name, y_test, preds, proba):
-    """Compact per-model metric line — full report suppressed to reduce noise."""
+    """Compact per-model metric line with precision, recall, F1, ROC-AUC, and PR-AUC."""
+    from sklearn.metrics import precision_score, recall_score
+    
     f1  = f1_score(y_test, preds, zero_division=0)
+    precision = precision_score(y_test, preds, zero_division=0)
+    recall = recall_score(y_test, preds, zero_division=0)
+    
     if len(np.unique(y_test)) > 1:
         roc = roc_auc_score(y_test, proba)
         pra = average_precision_score(y_test, proba)
-        print(f"    {name:<30}  F1={f1:.4f}  ROC-AUC={roc:.4f}  PR-AUC={pra:.4f}")
+        print(f"    {name:<30}  P={precision:.3f}  R={recall:.3f}  F1={f1:.4f}  ROC={roc:.4f}  PR-AUC={pra:.4f}")
     else:
-        print(f"    {name:<30}  F1={f1:.4f}  (single class — AUC skipped)")
+        print(f"    {name:<30}  P={precision:.3f}  R={recall:.3f}  F1={f1:.4f}  (single class — AUC skipped)")
 
 
 def _loc_baseline(X_test, y_test):
@@ -379,7 +384,8 @@ def _smote_resample(X_train, y_train, sample_weights=None):
 def _smotetomek_resample(X_train, y_train, sample_weights=None):
     """
     SMOTETomek oversampling; combines SMOTE with Tomek links cleaning.
-    Used for ablation study comparison.
+    SMOTETomek both adds synthetic samples AND removes Tomek links,
+    so we need to rebuild sample weights from scratch.
     """
     cols     = list(X_train.columns) if isinstance(X_train, pd.DataFrame) else None
     minority = int(y_train.sum())
@@ -397,6 +403,8 @@ def _smotetomek_resample(X_train, y_train, sample_weights=None):
     from imblearn.over_sampling import SMOTE
     smote = SMOTE(k_neighbors=k, random_state=RANDOM_STATE)
     smt = SMOTETomek(random_state=RANDOM_STATE, smote=smote)
+    
+    original_count = len(X_train)
     Xr, yr = smt.fit_resample(X_train, y_train)
 
     # Guarantee DataFrame with original column names
@@ -405,14 +413,18 @@ def _smotetomek_resample(X_train, y_train, sample_weights=None):
     elif cols is not None and isinstance(Xr, pd.DataFrame):
         Xr.columns = cols
 
-    # For SMOTETomek-generated samples, use average confidence weight
+    # Rebuild sample weights: SMOTETomek removes some original samples (Tomek links)
+    # and adds synthetic samples. We assign average confidence to all new samples.
     if sample_weights is not None:
-        original_count = len(sample_weights)
-        synthetic_count = len(yr) - original_count
-        if synthetic_count > 0:
-            avg_confidence = np.mean(sample_weights)
-            synthetic_weights = np.full(synthetic_count, avg_confidence)
-            sample_weights = np.concatenate([sample_weights, synthetic_weights])
+        avg_confidence = np.mean(sample_weights)
+        # First original_count samples that survived Tomek cleaning keep their weights
+        # All samples beyond that are synthetic and get average weight
+        new_weights = np.full(len(yr), avg_confidence)
+        # Copy original weights for samples that weren't removed (up to original_count)
+        n_kept = min(original_count, len(yr))
+        if n_kept > 0 and len(sample_weights) >= n_kept:
+            new_weights[:n_kept] = sample_weights[:n_kept]
+        sample_weights = new_weights
 
     return Xr, yr, sample_weights
 
@@ -950,10 +962,12 @@ def train_model(df, repos):
         print(f"TRAIN        : {[r for r in projects if r != test_repo]}")
 
         train_df = _temporal_sort(df[df["repo"] != test_repo])
-        test_df  = _temporal_sort(df[df["repo"] == test_repo])  # FIXED: Sort test data temporally
+        test_df  = _temporal_sort(df[df["repo"] == test_repo])
         
         # Validate temporal split prevents future leakage
-        _validate_temporal_split(train_df, test_df, is_temporal_split=False)
+        # For cross-project validation, we check that train data is temporally
+        # consistent (oldest files first) to prevent any temporal leakage
+        _validate_temporal_split(train_df, test_df, is_temporal_split=True)
 
         if len(train_df) < 10 or len(test_df) < 5:
             print("  Skipping fold — insufficient data")
@@ -968,10 +982,10 @@ def train_model(df, repos):
         X_test      = X_test[shared_cols]
 
         # Extract confidence weights from the original data
-        sample_weights = train_df["confidence"].values if "confidence" in train_df.columns else None
+        sample_weights_orig = train_df["confidence"].values if "confidence" in train_df.columns else None
         
         # SMOTETomek on train only (never on test)
-        X_train, y_train, sample_weights = _smotetomek_resample(X_train_raw, y_train_raw, sample_weights)
+        X_train, y_train, sample_weights = _smotetomek_resample(X_train_raw, y_train_raw, sample_weights_orig)
         train_buggy = int(y_train.sum())
         print(f"  Data  train={len(X_train)} (buggy={train_buggy})  "
               f"test={len(X_test)} (buggy={int(y_test.sum())})")
@@ -981,7 +995,10 @@ def train_model(df, repos):
             ("scaler", StandardScaler()),
             ("lr", LogisticRegression(max_iter=1000, random_state=RANDOM_STATE))
         ])
-        lr.fit(X_train, y_train, lr__sample_weight=sample_weights)
+        if sample_weights is not None:
+            lr.fit(X_train, y_train, lr__sample_weight=sample_weights)
+        else:
+            lr.fit(X_train, y_train)
         lr_preds = lr.predict(X_test)
         lr_proba = lr.predict_proba(X_test)[:, 1]
         _print_metrics("LR (baseline)", y_test, lr_preds, lr_proba)
@@ -1024,12 +1041,19 @@ def train_model(df, repos):
         # Top-K operational evaluation
         top_k_results = _top_k_evaluation(y_test, best_proba_fold, X_test, loc_col="loc")
 
+        from sklearn.metrics import precision_score, recall_score
+        fold_precision = precision_score(y_test, (best_proba_fold >= 0.5).astype(int), zero_division=0)
+        fold_recall = recall_score(y_test, (best_proba_fold >= 0.5).astype(int), zero_division=0)
+        
         fold_results.append({
             "test_repo":      os.path.basename(test_repo),
             "model":          fold_best_name,
             "n_test":         len(y_test),
             "n_buggy":        int(y_test.sum()),
+            "precision":      fold_precision,
+            "recall":         fold_recall,
             "f1":             best_f1_fold,
+            "roc_auc":        roc_auc_score(y_test, best_proba_fold) if has_both else 0.0,
             "pr_auc":         average_precision_score(y_test, best_proba_fold) if has_both else 0.0,
             "defect_density": fold_dd,
             "recall@10":      top_k_results['recall@10'] if top_k_results else 0.0,
@@ -1045,24 +1069,37 @@ def train_model(df, repos):
         print(f"\n{'='*72}")
         print("  CROSS-PROJECT EVALUATION SUMMARY")
         print(f"{'='*72}")
-        print(f"  {'Fold':<12} {'Model':<6} {'N(test)':<9} {'Buggy':<7} "
-              f"{'F1':<8} {'PR-AUC':<10} {'Rec@10':<8} {'Prec@10':<9}")
-        print(f"  {'-'*76}")
+        print(f"  {'Fold':<12} {'Model':<6} {'N':<5} {'Bug':<5} "
+              f"{'P':<6} {'R':<6} {'F1':<6} {'ROC':<6} {'PR-AUC':<8} {'Rec@10':<7}")
+        print(f"  {'-'*80}")
         for r in fold_results:
-            print(f"  {r['test_repo']:<12} {r['model']:<6} {r['n_test']:<9} "
-                  f"{r['n_buggy']:<7} {r['f1']:<8.4f} {r['pr_auc']:<10.4f} "
-                  f"{r['recall@10']:<8.3f} {r['precision@10']:<9.3f}")
+            print(f"  {r['test_repo']:<12} {r['model']:<6} {r['n_test']:<5} "
+                  f"{r['n_buggy']:<5} {r['precision']:<6.3f} {r['recall']:<6.3f} "
+                  f"{r['f1']:<6.3f} {r['roc_auc']:<6.3f} {r['pr_auc']:<8.3f} {r['recall@10']:<7.3f}")
+        avg_precision = sum(r["precision"] for r in fold_results) / len(fold_results)
+        avg_recall = sum(r["recall"] for r in fold_results) / len(fold_results)
         avg_f1  = sum(r["f1"]  for r in fold_results) / len(fold_results)
+        avg_roc = sum(r["roc_auc"] for r in fold_results) / len(fold_results)
         avg_auc = sum(r["pr_auc"] for r in fold_results) / len(fold_results)
         # Handle None values for defect_density
         dd_values = [r["defect_density"] for r in fold_results if r["defect_density"] is not None]
         avg_dd  = sum(dd_values) / len(dd_values) if dd_values else 0.0
         avg_rec10 = sum(r["recall@10"] for r in fold_results) / len(fold_results)
         avg_prec10 = sum(r["precision@10"] for r in fold_results) / len(fold_results)
-        print(f"  {'-'*76}")
-        print(f"  {'Average':<12} {'':6} {'':9} {'':7} "
-              f"{avg_f1:<8.4f} {avg_auc:<10.4f} {avg_rec10:<8.3f} {avg_prec10:<9.3f}")
-        print(f"{'='*72}")
+        print(f"  {'-'*80}")
+        print(f"  {'Average':<12} {'':6} {'':5} {'':5} "
+              f"{avg_precision:<6.3f} {avg_recall:<6.3f} {avg_f1:<6.3f} "
+              f"{avg_roc:<6.3f} {avg_auc:<8.3f} {avg_rec10:<7.3f}")
+        print(f"{'='*80}")
+        
+        # Print summary metrics for easy tracking
+        print(f"\n  SUMMARY METRICS:")
+        print(f"  Precision: {avg_precision:.3f}  (target: >0.85)")
+        print(f"  Recall:    {avg_recall:.3f}  (target: >0.80)")
+        print(f"  F1-Score:  {avg_f1:.3f}  (target: >0.85)")
+        print(f"  ROC-AUC:   {avg_roc:.3f}  (target: >0.90)")
+        print(f"  PR-AUC:    {avg_auc:.3f}  (target: >0.85)")
+        print(f"  Defects@20%: {avg_dd:.1%}  (target: >80%)")
 
     best_arch = max(arch_f1_totals, key=arch_f1_totals.get)
     avg_f1    = arch_f1_totals[best_arch] / max(fold_count, 1)
@@ -1083,8 +1120,9 @@ def train_model(df, repos):
     y_cal_final = y_all_raw.iloc[split_idx:]
     
     # SMOTETomek on the 80% train only
-    sample_weights = train_df["confidence"].values if "confidence" in train_df.columns else None
-    X_train_smote, y_train_smote, sample_weights = _smotetomek_resample(X_train_final, y_train_final, sample_weights)
+    # Extract confidence weights from the 80% training split
+    sample_weights_orig = df.iloc[:split_idx]["confidence"].values if "confidence" in df.columns else None
+    X_train_smote, y_train_smote, sample_weights = _smotetomek_resample(X_train_final, y_train_final, sample_weights_orig)
     
     # Needs categorical pipeline processor
     X_train_smote = _process_categorical(X_train_smote)
@@ -1125,6 +1163,30 @@ def train_model(df, repos):
     cal_status  = "✓ well-calibrated" if gap < 0.05 else f"⚠ gap={gap:.3f}"
     print(f"  Calibration  pred={mean_pred:.3f}  actual={actual_rate:.3f}  "
           f"Brier={brier_score:.4f}  {cal_status}")
+    
+    # ── Save calibration curve plot ──────────────────────────────────────────────────
+    try:
+        from sklearn.calibration import calibration_curve
+        import matplotlib.pyplot as plt
+        
+        prob_true, prob_pred = calibration_curve(y_cal_final, cal_proba, n_bins=10)
+        
+        plt.figure(figsize=(8, 6))
+        plt.plot(prob_pred, prob_true, marker='o', linewidth=2, label='Model')
+        plt.plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfect Calibration')
+        plt.xlabel('Predicted Probability', fontsize=12)
+        plt.ylabel('True Probability', fontsize=12)
+        plt.title(f'Calibration Curve (Brier={brier_score:.4f})', fontsize=14)
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        
+        os.makedirs("model", exist_ok=True)
+        plt.savefig("model/calibration_curve.png", dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"  Calibration curve saved → model/calibration_curve.png")
+    except Exception as e:
+        print(f"  ⚠ Could not save calibration curve: {e}")
 
     os.makedirs("model", exist_ok=True)
     
@@ -1145,11 +1207,19 @@ def train_model(df, repos):
         "model": final_inference_obj,
         "features": global_features,
         "training_stats": _training_stats,
+        "scaler": None,  # Populated by main.py after calling train_model()
     }
 
     _save_model_with_metadata(
         save_dict,
-        metrics={"avg_f1": avg_f1, "avg_pr_auc": avg_auc},
+        metrics={
+            "avg_precision": avg_precision if 'avg_precision' in locals() else 0.0,
+            "avg_recall": avg_recall if 'avg_recall' in locals() else 0.0,
+            "avg_f1": avg_f1,
+            "avg_roc_auc": avg_roc if 'avg_roc' in locals() else 0.0,
+            "avg_pr_auc": avg_auc,
+            "avg_defect_density": avg_dd if 'avg_dd' in locals() else 0.0,
+        },
         repos=repos,
         global_features=global_features,
     )

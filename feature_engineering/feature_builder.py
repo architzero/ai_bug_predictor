@@ -19,12 +19,12 @@ NON_FEATURE_COLS = [
     "buggy_commit", "commit_hash", "repo", "language", "confidence"
 ]
 
-# leakage cols excluded from correlation analysis and model training
+# Leakage columns - these are NO LONGER COMPUTED (removed from feature_builder.py)
+# Kept here for reference in case old cached data still has them
 LEAKAGE_COLS = [
-    "bug_fix_ratio",
-    "past_bug_count",
-    "days_since_last_bug",
-    "bug_fixes",  # CRITICAL: This is derived from the label - circular logic
+    "bug_fix_ratio",      # REMOVED: derived from label
+    "past_bug_count",     # REMOVED: derived from label  
+    "days_since_last_bug", # REMOVED: derived from label
 ]
 
 EXCLUDE_FROM_CORR = set(NON_FEATURE_COLS + LEAKAGE_COLS)
@@ -163,10 +163,8 @@ def build_features(static_results, git_results):
             "temporal_bug_risk":      g.get("temporal_bug_risk", 0.0),
             "temporal_bug_memory":    g.get("temporal_bug_memory", 0.0),
 
-            # bug history (kept for analysis, excluded from model via LEAKAGE_COLS)
-            "past_bug_count":      g.get("past_bug_count",      0),
-            "bug_fix_ratio":       g.get("bug_fix_ratio",       0),
-            "days_since_last_bug": g.get("days_since_last_bug", -1),
+            # Bug history features REMOVED - they were derived from labels (data leakage)
+            # These features are no longer computed to prevent circular logic
         }
 
         rows.append(row)

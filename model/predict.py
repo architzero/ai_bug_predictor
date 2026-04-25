@@ -143,11 +143,25 @@ def predict(model_data, df, return_confidence=False):
     X = df_source.drop(columns=[
         "file", "buggy", "bug_fixes", "bug_density",
         "buggy_commit", "commit_hash", "repo",
+        # Removed leakage features (no longer computed, but drop if present in old cached data)
         "bug_fix_ratio", "past_bug_count", "days_since_last_bug"
     ], errors="ignore")
 
     if features is not None:
         missing = [c for c in features if c not in X.columns]
+        if missing:
+            # CRITICAL: Log missing features and reduce confidence
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "Missing %d feature(s) during prediction (zero-filled): %s. "
+                "This may indicate distribution shift or model/data version mismatch.",
+                len(missing), missing[:5]  # Show first 5 for brevity
+            )
+            # Add warning to confidence result (will be populated later)
+            # Store in df metadata for now
+            df_source.attrs['missing_features'] = missing
+            
         for c in missing:
             X[c] = 0
         X = X[features]
@@ -160,6 +174,15 @@ def predict(model_data, df, return_confidence=False):
 
     # Assess prediction confidence
     confidence_result = _assess_prediction_confidence(df_source, risk, training_stats=training_stats)
+    
+    # Add missing features warning to confidence result if present
+    if hasattr(df_source, 'attrs') and 'missing_features' in df_source.attrs:
+        missing = df_source.attrs['missing_features']
+        confidence_result["warnings"].append(
+            f"Missing {len(missing)} features (zero-filled): {', '.join(missing[:3])}..."
+        )
+        # Reduce confidence score for missing features
+        confidence_result["confidence_score"] *= max(0.5, 1.0 - len(missing) * 0.05)
     
     # Add confidence information to dataframe
     df_source["confidence_score"] = confidence_result["confidence_score"]

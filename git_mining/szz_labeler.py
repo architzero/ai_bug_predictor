@@ -17,7 +17,7 @@ from typing import Dict, Set, List, Optional, Tuple
 import pandas as pd
 from pydriller import Repository, Git
 
-from config import CACHE_VERSION
+from config import CACHE_VERSION, SKIP_DIR_PATTERNS, SKIP_FILE_PATTERNS
 from static_analysis.analyzer import SUPPORTED_EXTENSIONS, get_language
 
 # ── Keyword lists ──────────────────────────────────────────────────────────────
@@ -119,16 +119,9 @@ TEST_FILE_PATTERNS  = [
 
 TEST_FILE_EXTENSIONS = [".test.js", ".spec.js", ".test.ts", ".spec.ts"]
 
-GENERATED_PATHS = [
-    "/node_modules/", "/vendor/", "/dist/", "/build/",
-    "/generated/", "/__generated__/", "/migrations/",
-    "/coverage/", "/.venv/", "/venv/", "/env/",
-    # ── Must mirror SKIP_DIR_PATTERNS in static_analysis/analyzer.py ────────────
-    # Files in these dirs are excluded from analysis, so SZZ must also exclude
-    # them — otherwise SZZ labels files the analyzer never scores, causing a
-    # high SZZ-path count with near-zero match rate (e.g. FastAPI 5.1% → fix).
-    "/docs_src/", "/docs/", "/examples/", "/example/",
-]
+# GENERATED_PATHS now uses shared SKIP_DIR_PATTERNS from config.py
+# This ensures SZZ and analyzer exclude the same directories
+GENERATED_PATHS = [f"/{pattern}/" for pattern in SKIP_DIR_PATTERNS]
 
 
 # ── Path helpers ───────────────────────────────────────────────────────────────
