@@ -23,18 +23,19 @@ LEAKAGE_COLS = [
 
 # Language encoding for multi-language support
 # Each language gets a unique ID for categorical encoding
+# CRITICAL: IDs must be unique and sequential (0-10) for XGBoost categorical support
 LANGUAGE_ENCODING = {
     "python": 0,
     "javascript": 1,
-    "typescript": 2,  # Changed from 1 to 2 (was duplicate)
-    "java": 3,        # Changed from 2 to 3
-    "go": 4,          # Changed from 3 to 4
-    "ruby": 5,        # Changed from 4 to 5
-    "php": 6,         # Changed from 5 to 6
-    "csharp": 7,      # Changed from 6 to 7
-    "cpp": 8,         # Changed from 7 to 8
-    "rust": 9,        # Changed from 8 to 9
-    "other": 10,      # Changed from 9 to 10
+    "typescript": 2,
+    "java": 3,
+    "go": 4,
+    "ruby": 5,
+    "php": 6,
+    "csharp": 7,
+    "cpp": 8,
+    "rust": 9,
+    "other": 10,
 }
 
 

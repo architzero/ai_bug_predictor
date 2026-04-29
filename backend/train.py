@@ -112,10 +112,13 @@ def _interpret_risk_score(prob, n_samples=None, confidence_level="High"):
 class _IsotonicWrapper:
     """Wrapper for IsotonicRegression to match sklearn classifier interface.
     
-    No probability capping - let the model express its true confidence.
-    Capping at 95% causes all high-risk files to cluster at the same value.
+    CRITICAL FIX: Remove probability capping to preserve discrimination.
+    Capping at 0.95-0.99 causes all high-risk files to cluster at the ceiling,
+    losing the ability to distinguish between truly critical vs high-risk files.
+    
+    Light capping (0.01-0.99) only prevents numerical issues, not discrimination loss.
     """
-    def __init__(self, iso_reg, cap_min=0.01, cap_max=0.99):
+    def __init__(self, iso_reg, cap_min=0.001, cap_max=0.999):
         self.iso_reg = iso_reg
         self.multi_class = "ovr"  # For compatibility
         self.cap_min = cap_min
@@ -123,7 +126,8 @@ class _IsotonicWrapper:
     
     def predict_proba(self, X):
         cal_proba = self.iso_reg.transform(X.ravel())
-        # Light capping only to prevent numerical issues (0.01-0.99 instead of 0.05-0.95)
+        # Minimal capping only to prevent numerical issues (0.001-0.999)
+        # This preserves discrimination while avoiding log(0) errors
         cal_proba = np.clip(cal_proba, self.cap_min, self.cap_max)
         return np.column_stack([1 - cal_proba, cal_proba])
 

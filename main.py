@@ -229,6 +229,14 @@ if __name__ == '__main__':
         if repo_df.empty:
             continue
 
+        # Filter out test files from the report (already filtered in predict())
+        # Just check if we have any files with risk > 0
+        repo_df = repo_df[repo_df['risk'] > 0].copy()
+        
+        if repo_df.empty:
+            print(f"\n  ┌─ {repo_name}  (no source files to display)")
+            continue
+
         buggy_count = int(repo_df["buggy"].sum())
         risky_count = int(repo_df["risky"].sum())
         total       = len(repo_df)
@@ -294,22 +302,14 @@ if __name__ == '__main__':
         print(f"  Highest-risk file : {os.path.basename(str(top['file']))}  →  {top['risk']:.1%}")
 
     # ══════════════════════════════════════════════════════════════════════════════
-    #  STAGE 7 — Ablation Study
+    #  STAGE 7 — Ablation Study (Always Run)
     # ══════════════════════════════════════════════════════════════════════════════
-    #  STAGE 7 — Ablation Study (Optional)
-    # ══════════════════════════════════════════════════════════════════════════════
-    if os.getenv("RUN_ABLATION", "0") == "1":
-        print("\n" + "═" * 72)
-        print("  STAGE 7  ·  ABLATION STUDY")
-        print("═" * 72)
-        
-        global_feats = model.get("features", None) if isinstance(model, dict) else None
-        run_ablation_study(df_for_ablation, global_features=global_feats)
-    else:
-        print("\n" + "═" * 72)
-        print("  STAGE 7  ·  ABLATION STUDY (Skipped)")
-        print("═" * 72)
-        print("  To run ablation study, set environment variable: RUN_ABLATION=1")
+    print("\n" + "═" * 72)
+    print("  STAGE 7  ·  ABLATION STUDY")
+    print("═" * 72)
+    
+    global_feats = model.get("features", None) if isinstance(model, dict) else None
+    run_ablation_study(df_for_ablation, global_features=global_feats)
 
     print("\n" + "═" * 72)
     print("  PIPELINE COMPLETE")

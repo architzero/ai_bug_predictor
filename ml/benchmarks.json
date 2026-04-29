@@ -2,23 +2,23 @@
   "full": {
     "name": "Full Benchmark (all 9 repos)",
     "repos": [
-      "requests",
       "httpx",
       "flask",
+      "requests",
       "fastapi",
-      "express",
       "axios",
+      "express",
       "celery",
-      "sqlalchemy",
-      "guava"
+      "guava",
+      "sqlalchemy"
     ],
-    "macro_f1": 0.8624243890014281,
-    "weighted_f1": 0.7747070545935059,
-    "pr_auc": 0.9206539572500976,
-    "roc_auc": 0.9197596152142151,
-    "recall@20%": 0.29987198626758405,
-    "precision": 0.8637346732975234,
-    "recall": 0.8958116660814236
+    "macro_f1": 0.8531353404413761,
+    "weighted_f1": 0.7448844340970008,
+    "pr_auc": 0.9399742076416052,
+    "roc_auc": 0.9322442166594838,
+    "recall@20%": 0.33148453889238483,
+    "precision": 0.8516759971689898,
+    "recall": 0.8831969979705359
   },
   "reliable": {
     "name": "Reliable Benchmark (\u226530 files, 15-75% bug rate)",
@@ -26,21 +26,21 @@
       "fastapi",
       "axios",
       "celery",
-      "sqlalchemy",
-      "guava"
+      "guava",
+      "sqlalchemy"
     ],
     "excluded": [
-      "requests",
       "httpx",
       "flask",
+      "requests",
       "express"
     ],
-    "honest_f1": 0.8650651549307137,
-    "honest_pr_auc": 0.897931091304144,
-    "honest_recall@20%": 0.3331029086149847,
-    "honest_precision": 0.895602009946285,
-    "honest_recall": 0.8437174991221356
+    "honest_f1": 0.85546058641964,
+    "honest_pr_auc": 0.9202075420088575,
+    "honest_recall@20%": 0.340005503339626,
+    "honest_precision": 0.8727520909915798,
+    "honest_recall": 0.8664621636224704
   },
-  "timestamp": "2026-04-29T16:48:40.278127",
+  "timestamp": "2026-04-29T20:06:36.692560",
   "note": "DO NOT CHANGE THESE NUMBERS BEFORE PRESENTATION"
 }

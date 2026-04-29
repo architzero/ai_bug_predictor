@@ -33,21 +33,22 @@ def _assign_risk_tiers_percentile(df):
             risk_scores = repo_df["risk"].values
             n = len(risk_scores)
             
-            # Get unique risk values and sort descending
-            unique_risks = np.unique(risk_scores)[::-1]
+            # Initialize all as LOW (use object dtype to avoid string truncation)
+            tiers = np.array(["LOW"] * n, dtype=object)
             
-            # Initialize all as LOW
-            tiers = np.array(["LOW"] * n)
+            # Get unique risk values and their counts, sorted descending
+            unique_risks, counts = np.unique(risk_scores, return_counts=True)
+            unique_risks = unique_risks[::-1]  # Sort descending
+            counts = counts[::-1]
             
-            # Assign tiers based on percentile, handling ties
-            current_rank = 0
-            for unique_risk in unique_risks:
+            # Assign tiers based on cumulative rank position
+            cumulative_rank = 0
+            for unique_risk, count in zip(unique_risks, counts):
                 # Find all files with this risk score
                 mask = risk_scores == unique_risk
-                count = mask.sum()
                 
-                # Calculate percentile for this group (use minimum rank)
-                percentile = current_rank / n
+                # Calculate percentile for this group (use minimum rank for ties)
+                percentile = cumulative_rank / n
                 
                 # Assign tier to all files in this group
                 if percentile < 0.10:
@@ -59,7 +60,7 @@ def _assign_risk_tiers_percentile(df):
                 # else: LOW (already set)
                 
                 # Move to next rank group
-                current_rank += count
+                cumulative_rank += count
             
             repo_df["risk_tier"] = tiers
             return repo_df
@@ -71,23 +72,34 @@ def _assign_risk_tiers_percentile(df):
         risk_scores = df["risk"].values
         n = len(risk_scores)
         
-        # Sort indices by risk (descending)
-        sorted_indices = np.argsort(risk_scores)[::-1]
+        # Initialize all as LOW (use object dtype to avoid string truncation)
+        tiers = np.array(["LOW"] * n, dtype=object)
         
-        # Initialize all as LOW
-        tiers = np.array(["LOW"] * n)
+        # Get unique risk values and their counts, sorted descending
+        unique_risks, counts = np.unique(risk_scores, return_counts=True)
+        unique_risks = unique_risks[::-1]  # Sort descending
+        counts = counts[::-1]
         
-        # Assign tiers based on percentile
-        for rank, idx in enumerate(sorted_indices):
-            percentile = rank / n
+        # Assign tiers based on cumulative rank position
+        cumulative_rank = 0
+        for unique_risk, count in zip(unique_risks, counts):
+            # Find all files with this risk score
+            mask = risk_scores == unique_risk
             
+            # Calculate percentile for this group (use minimum rank for ties)
+            percentile = cumulative_rank / n
+            
+            # Assign tier to all files in this group
             if percentile < 0.10:
-                tiers[idx] = "CRITICAL"
+                tiers[mask] = "CRITICAL"
             elif percentile < 0.25:
-                tiers[idx] = "HIGH"
+                tiers[mask] = "HIGH"
             elif percentile < 0.50:
-                tiers[idx] = "MODERATE"
+                tiers[mask] = "MODERATE"
             # else: LOW (already set)
+            
+            # Move to next rank group
+            cumulative_rank += count
         
         df["risk_tier"] = tiers
     
@@ -314,10 +326,10 @@ def predict(model_data, df, return_confidence=False):
         # Fill missing features with training median (better than zero)
         for c in missing:
             if training_stats and c in training_stats:
-                # Use training median if available
+                # Use training median - more robust than mean for skewed distributions
                 fill_value = training_stats[c].get("median", 0)
             else:
-                # Fallback to zero if no training stats
+                # Fallback to zero if no training stats available
                 fill_value = 0
             X[c] = fill_value
         X = X[features]

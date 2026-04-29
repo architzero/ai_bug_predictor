@@ -158,28 +158,22 @@ def run(repo_input):
     df_sorted = df.sort_values("risk", ascending=False)
     
     print(f"\n{'='*70}")
-    print(f"  TOP 15 RISK FILES")
+    print(f"  TOP 10 RISK FILES (with explanations)")
     print(f"{'='*70}")
     print(f"\n  ⚠️  IMPORTANT: Risk percentages are relative rankings within this repository.")
     print(f"      Focus on TIER (CRI/HIG/MOD/LOW) for prioritization, not absolute %.")
     print(f"      Tiers are based on percentile ranking: CRI=top 10%, HIG=10-25%, etc.\n")
-    print(f"  {'Rank':<6} {'Risk':<12} {'Tier':<10} {'LOC':<6} {'File':<30}")
-    print(f"  {'-'*70}")
     
-    for rank, (_, row) in enumerate(df_sorted.head(15).iterrows(), 1):
+    for rank, (_, row) in enumerate(df_sorted.head(10).iterrows(), 1):
         risk_pct = f"{row['risk']:.1%}"
         tier = row.get('risk_tier', 'UNKNOWN')
         loc = int(row.get('loc', 0))
         filename = os.path.basename(str(row['file']))
+        explanation = row.get('explanation', 'No explanation available')
         
-        # Truncate long filenames
-        if len(filename) > 30:
-            filename = filename[:27] + "..."
-        
-        # Color-code tiers (using text labels since we can't use colors in CLI)
-        tier_display = f"{tier:<10}"
-        
-        print(f"  #{rank:<5} {risk_pct:<12} {tier_display} {loc:<6} {filename:<30}")
+        print(f"\n  #{rank}. {filename}")
+        print(f"      Risk: {risk_pct} | Tier: {tier} | LOC: {loc}")
+        print(f"      Why risky: {explanation}")
     
     print(f"\n{'='*70}")
     print(f"\n✓ Analysis complete!")

@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html lang="en" class="antialiased bg-gray-900 text-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ auth.csrf_token if auth.csrf_token else '' }}">
+    <title>Bug Predictor - Risk Intelligence</title>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Custom Configs -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        github: {
+                            // GitHub's actual colors
+                            dark: '#0d1117',
+                            darker: '#010409',
+                            border: '#30363d',
+                            btn: '#21262d',
+                            btnhighlight: '#f6f8fa',
+                            text: '#c9d1d9',
+                            muted: '#8b949e',
+                            green: '#2ea043',
+                            greenhover: '#238636',
+                            blue: '#0969da',
+                            bluehover: '#0550ae',
+                            gray: '#656d76',
+                            graylight: '#f6f8fa',
+                            grayborder: '#d1d9e0',
+                            orange: '#fb8500',
+                            red: '#cf222e',
+                            purple: '#8250df',
+                            yellow: '#d29922'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body x-data="{ currentTab: 'repos', scanning: false, scanProgress: 0, scanStatus: '' }">
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-[9999] flex flex-col gap-2"></div>
+    
+    {% if not auth.is_authenticated %}
+    <!-- ================= PAGE 1 - LANDING ================= -->
+    <div class="min-h-screen bg-github-darker">
+        <!-- Header -->
+        <div class="border-b border-github-border">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center py-6">
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center justify-center w-10 h-10 bg-gray-800 rounded-lg">
+                            <i class="fa-solid fa-shield-halved text-xl text-blue-400"></i>
+                        </div>
+                        <h1 class="text-2xl font-bold text-white">CodeSentinel</h1>
+                    </div>
+                    <a href="/auth/github/login" class="github-btn-primary">
+                        <i class="fa-brands fa-github mr-2"></i>
+                        Sign in with GitHub
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hero Section -->
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+            <div class="text-center mb-16">
+                <h2 class="text-5xl font-bold text-white mb-4">
+                    Find where bugs hide before your users do
+                </h2>
+                <p class="text-xl text-gray-400 mb-8 max-w-3xl mx-auto">
+                    AI-powered bug risk prediction for your codebase. Scan any repository to get file-level risk scores, explanations, and actionable insights.
+                </p>
+            </div>
+
+            <!-- Repo Input Section -->
+            <div class="max-w-2xl mx-auto mb-16">
+                <div class="github-card p-8">
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <input 
+                            type="text" 
+                            id="repo-input"
+                            placeholder="https://github.com/owner/repo"
+                            class="github-input flex-1 px-4 py-3 text-lg"
+                        >
+                        <button 
+                            id="analyze-btn"
+                            class="github-btn-scan px-8 py-3 text-lg"
+                        >
+                            <i class="fa-solid fa-radar mr-2"></i>
+                            Analyze
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Language Support -->
+            <div class="text-center mb-16">
+                <p class="text-gray-400 mb-4">Supports multiple programming languages</p>
+                <div class="flex flex-wrap justify-center gap-3">
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">Python</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">JavaScript</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">TypeScript</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">Java</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">Go</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">Ruby</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">PHP</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">C#</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">C++</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">Rust</span>
+                    <span class="px-3 py-1 bg-github-bg-soft rounded-full text-sm text-gray-300">more</span>
+                </div>
+            </div>
+
+            <!-- Features Preview -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
+                <div class="github-card p-6 text-center">
+                    <i class="fa-solid fa-brain text-3xl text-blue-400 mb-4"></i>
+                    <h3 class="text-lg font-semibold text-white mb-2">ML-Powered</h3>
+                    <p class="text-sm text-gray-400">Advanced machine learning models trained on real open-source projects</p>
+                </div>
+                <div class="github-card p-6 text-center">
+                    <i class="fa-solid fa-lightbulb text-3xl text-yellow-400 mb-4"></i>
+                    <h3 class="text-lg font-semibold text-white mb-2">Explainable AI</h3>
+                    <p class="text-sm text-gray-400">SHAP explanations show why files are flagged as risky</p>
+                </div>
+                <div class="github-card p-6 text-center">
+                    <i class="fa-solid fa-chart-line text-3xl text-green-400 mb-4"></i>
+                    <h3 class="text-lg font-semibold text-white mb-2">Actionable Insights</h3>
+                    <p class="text-sm text-gray-400">Get recommendations for code review and testing priorities</p>
+                </div>
+            </div>
+
+            <!-- Recently Scanned Section -->
+            <div class="max-w-4xl mx-auto">
+                <h3 class="text-2xl font-bold text-white mb-6 text-center">Recently Scanned</h3>
+                <div class="space-y-4" id="recent-scans">
+                    <div class="github-card p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">Python</span>
+                                <span class="font-medium text-white">psf/requests</span>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-1">
+                                    <div class="w-24 bg-gray-700 rounded-full h-2">
+                                        <div class="bg-red-500 h-2 rounded-full" style="width: 78%"></div>
+                                    </div>
+                                    <span class="text-sm text-gray-400">78% risk</span>
+                                </div>
+                                <span class="text-sm text-gray-500">2h ago</span>
+                            </div>
+                        </div>
+                        <button onclick="window.scanCustomRepo('https://github.com/psf/requests')" class="github-btn-secondary px-4 py-2 text-sm">Scan Again</button>
+                    </div>
+                    
+                    <div class="github-card p-4 flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs font-medium">JavaScript</span>
+                                <span class="font-medium text-white">expressjs/express</span>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-1">
+                                    <div class="w-24 bg-gray-700 rounded-full h-2">
+                                        <div class="bg-yellow-500 h-2 rounded-full" style="width: 61%"></div>
+                                    </div>
+                                    <span class="text-sm text-gray-400">61% risk</span>
+                                </div>
+                                <span class="text-sm text-gray-500">1d ago</span>
+                            </div>
+                        </div>
+                        <button onclick="window.scanCustomRepo('https://github.com/expressjs/express')" class="github-btn-secondary px-4 py-2 text-sm">Scan Again</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% else %}
+    <!-- ================= AUTHENTICATED DASHBOARD ================= -->
+    <div class="min-h-screen flex flex-col">
+        <!-- Top Navbar -->
+        <nav class="bg-gray-900 border-b border-gray-800 shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <div class="flex items-center gap-3">
+                            <div class="flex items-center justify-center w-8 h-8 bg-gray-800 rounded">
+                                <i class="fa-solid fa-shield-halved text-blue-400 text-sm"></i>
+                            </div>
+                            <span class="font-bold text-xl text-white">Bug Predictor</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-6">
+                        <div class="flex space-x-1">
+                            <button @click="currentTab = 'repos'" :class="currentTab === 'repos' ? 'text-white bg-gray-800' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'" class="px-4 py-2 text-sm font-medium rounded-md transition-smooth">Repositories</button>
+                            <button @click="currentTab = 'scan'" :class="currentTab === 'scan' ? 'text-white bg-gray-800' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'" class="px-4 py-2 text-sm font-medium rounded-md transition-smooth" x-show="scanning || scanStatus === 'complete'">Active Scan</button>
+                            <button @click="currentTab = 'pr-analyzer'" :class="currentTab === 'pr-analyzer' ? 'text-white bg-gray-800' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'" class="px-4 py-2 text-sm font-medium rounded-md transition-smooth">PR Analyzer</button>
+                            <button @click="currentTab = 'model'" :class="currentTab === 'model' ? 'text-white bg-gray-800' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'" class="px-4 py-2 text-sm font-medium rounded-md transition-smooth">Model Eval</button>
+                            <button @click="currentTab = 'about'" :class="currentTab === 'about' ? 'text-white bg-gray-800' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'" class="px-4 py-2 text-sm font-medium rounded-md transition-smooth">About</button>
+                        </div>
+                        <div class="flex items-center gap-3 pl-4 border-l border-gray-700">
+                            <img class="h-8 w-8 rounded-full border border-gray-600" src="{{ auth.avatar }}" alt="Avatar">
+                            <div class="hidden sm:block">
+                                <div class="text-sm font-medium text-white">{{ auth.username }}</div>
+                                <div class="text-xs text-gray-400">Developer</div>
+                            </div>
+                            <a href="/auth/logout" class="text-gray-400 hover:text-white transition-smooth p-2 rounded hover:bg-gray-800" title="Sign out">
+                                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            
+            <!-- ====== TAB: REPOSITORIES ====== -->
+            <div x-show="currentTab === 'repos'" x-transition.opacity>
+                <!-- Custom Analysis Section (Top Priority) -->
+                <div class="github-card p-8 mb-10">
+                    <div class="flex items-center gap-6 mb-8">
+                        <div class="flex items-center justify-center w-14 h-14 bg-gray-800 rounded-xl shadow-sm border border-gray-700">
+                            <i class="fa-solid fa-search text-green-500 text-xl"></i>
+                        </div>
+                        <div class="flex-1">
+                            <h2 class="text-3xl font-bold github-text-primary mb-2">Scan Any Repository</h2>
+                            <p class="text-lg github-text-soft">Enter a GitHub URL to instantly analyze any repository for bugs and risks</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-4">
+                        <div class="flex-1">
+                            <input type="text" id="custom-scan-path" placeholder="https://github.com/owner/repo" class="github-input w-full px-6 py-4 text-lg">
+                        </div>
+                        <button onclick="document.querySelector('#custom-scan-btn').click()" id="custom-scan-btn" class="github-btn-scan flex items-center gap-3 px-8 py-4 text-lg">
+                            <i class="fa-solid fa-radar"></i>
+                            <span class="font-semibold">Scan Repository</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- GitHub Style Header -->
+                <div class="mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            {% if auth.is_authenticated %}
+                            <img class="h-12 w-12 rounded-full border border-gray-300" src="{{ auth.avatar }}">
+                            <div>
+                                <h1 class="text-2xl font-bold text-gray-100">{{ auth.username }}</h1>
+                                <p class="text-sm text-gray-500">Your repositories</p>
+                            </div>
+                            {% else %}
+                            <div>
+                                <h1 class="text-2xl font-bold text-gray-100">AI Bug Predictor</h1>
+                                <p class="text-sm text-gray-500">Scan any public repository</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="flex items-center gap-3">
+                            {% if auth.is_authenticated %}
+                            <a href="/auth/logout" class="text-gray-500 hover:text-gray-700 text-sm">Sign out</a>
+                            {% else %}
+                            <a href="/auth/github/login" class="github-btn-scan flex items-center gap-2 px-4 py-2 text-sm">
+                                <i class="fa-brands fa-github"></i>
+                                <span>Sign in with GitHub</span>
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Repositories Grid (2-column like GitHub) -->
+                <div class="github-card overflow-hidden" 
+                     x-data="{ repos: [], filteredRepos: [], loading: true, search: '' }" 
+                     x-init="
+                        fetch('/api/repos').then(r => r.json()).then(data => { 
+                            if(data.error) throw new Error(data.error);
+                            repos = data; filteredRepos = data; loading = false; 
+                        }).catch(e => console.error(e));
+                        document.getElementById('repo-search').addEventListener('input', (e) => {
+                            search = e.target.value.toLowerCase();
+                            filteredRepos = repos.filter(r => r.name.toLowerCase().includes(search));
+                        })
+                     ">
+                    
+                    <div class="p-4 border-b border-gray-200">
+                        <div class="flex items-center gap-4">
+                            <div class="relative flex-1 max-w-sm">
+                                <i class="fa-solid fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                                <input type="text" id="repo-search" placeholder="Find a repository..." class="github-input w-full pl-10 pr-4 py-2">
+                            </div>
+                            <span class="text-sm text-gray-500" x-show="!loading && filteredRepos.length" x-text="`${filteredRepos.length} repositories`"></span>
+                        </div>
+                    </div>
+                    
+                    <div x-show="loading" class="p-12 text-center text-gray-500">
+                        <i class="fa-solid fa-circle-notch github-spinner text-3xl mb-4 text-blue-500"></i>
+                        <p class="text-lg font-medium">Loading repositories...</p>
+                    </div>
+                    
+                    <div x-show="!loading && filteredRepos.length === 0" class="p-12 text-center">
+                        <i class="fa-solid fa-inbox text-4xl text-gray-300 mb-4"></i>
+                        <p class="text-lg font-medium text-gray-600">No repositories found</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 p-8" x-show="!loading && filteredRepos.length > 0">
+                        <template x-for="repo in filteredRepos" :key="repo.name">
+                            <div class="github-card p-8 hover:shadow-xl transition-all duration-300 cursor-pointer group">
+                                <div class="flex items-start justify-between mb-6">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-3 mb-4">
+                                            <a :href="'https://github.com/' + repo.name" target="_blank" class="github-text-link font-bold text-xl transition-colors" x-text="repo.name.split('/')[1]"></a>
+                                            <span x-show="repo.private" class="px-3 py-1.5 text-xs font-semibold bg-gray-800 github-text-secondary rounded-full border border-gray-700">Private</span>
+                                        </div>
+                                        <p class="text-base github-text-muted mb-6 leading-relaxed italic">AI-powered bug risk and code quality analysis</p>
+                                        <div class="flex items-center gap-6 text-sm github-text-muted">
+                                            <span class="flex items-center gap-2">
+                                                <span class="w-3 h-3 rounded-full shadow-sm" 
+                                                      :class="{'bg-yellow-500': repo.language.includes('Script') || repo.language==='JavaScript', 'bg-blue-500': repo.language==='Python', 'bg-red-600': repo.language==='Java', 'bg-cyan-500': repo.language==='Go', 'bg-gray-400': !repo.language}"></span>
+                                                <span x-text="repo.language || 'Mixed'"></span>
+                                            </span>
+                                            <span class="flex items-center gap-2">
+                                                <i class="fa-regular fa-star text-yellow-500"></i>
+                                                <span x-text="repo.stars"></span>
+                                            </span>
+                                            <span class="flex items-center gap-2">
+                                                <i class="fa-regular fa-clock"></i>
+                                                <span x-text="'Updated ' + new Date(repo.updated_at).toLocaleDateString()"></span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button @click="
+                                    scanning = true; 
+                                    scanProgress = 0;
+                                    scanStatus = 'Initializing...';
+                                    currentTab = 'scan';
+                                    window.scanCustomRepo('https://github.com/' + repo.name + '.git');
+                                " class="github-btn-scan w-full flex items-center justify-center gap-3 py-4 group-hover:scale-[1.02] transition-transform">
+                                    <i class="fa-solid fa-radar"></i>
+                                    <span class="font-semibold">Scan Repository</span>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== TAB: SCAN & INSIGHTS (Page 2 - Scan Progress) ====== -->
+            <div x-show="currentTab === 'scan'" x-cloak x-transition.opacity>
+                
+                <!-- Scanning State -->
+                <div x-show="scanning && scanStatus !== 'complete'" class="max-w-2xl mx-auto mt-20 p-8 border border-gray-700 rounded-lg github-card shadow-sm">
+                    <h2 class="text-2xl font-bold mb-4 text-center" id="scan-repo-name">Analyzing repository...</h2>
+                    
+                    <div class="relative pt-1 mb-6">
+                        <div class="overflow-hidden h-3 mb-4 text-xs flex rounded bg-gray-700">
+                            <div :style="`width: ${scanProgress}%`" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-green-500 transition-all duration-500 github-progress"></div>
+                        </div>
+                        <div class="text-center text-sm text-gray-400">
+                            <span x-text="`${scanProgress}%`"></span>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-3 font-mono text-sm">
+                        <div class="flex items-center gap-3 text-gray-300">
+                            <i class="fa-solid fa-check text-green-500" x-show="scanProgress >= 20"></i>
+                            <i class="fa-solid fa-circle-notch fa-spin text-blue-500" x-show="scanProgress < 20"></i>
+                            <span>Cloning repository <span class="text-gray-500">(3s)</span></span>
+                        </div>
+                        <div class="flex items-center gap-3 text-gray-300">
+                            <i class="fa-solid fa-check text-green-500" x-show="scanProgress >= 40"></i>
+                            <i class="fa-solid fa-circle-notch fa-spin text-blue-500" x-show="scanProgress >= 20 && scanProgress < 40"></i>
+                            <span>Mining git history <span class="text-gray-500">(11s)</span></span>
+                        </div>
+                        <div class="flex items-center gap-3 text-gray-300">
+                            <i class="fa-solid fa-check text-green-500" x-show="scanProgress >= 60"></i>
+                            <i class="fa-solid fa-circle-notch fa-spin text-blue-500" x-show="scanProgress >= 40 && scanProgress < 60"></i>
+                            <span>Analyzing code structure <span class="text-gray-500">(5s)</span></span>
+                        </div>
+                        <div class="flex items-center gap-3 text-gray-300">
+                            <i class="fa-solid fa-check text-green-500" x-show="scanProgress >= 80"></i>
+                            <i class="fa-solid fa-circle-notch fa-spin text-blue-500" x-show="scanProgress >= 60 && scanProgress < 80"></i>
+                            <span>Engineering features <span class="text-gray-500">(2s)</span></span>
+                        </div>
+                        <div class="flex items-center gap-3 text-gray-300">
+                            <i class="fa-solid fa-circle-notch fa-spin text-blue-500" x-show="scanProgress >= 80 && scanProgress < 95"></i>
+                            <i class="fa-solid fa-check text-green-500" x-show="scanProgress >= 95"></i>
+                            <span>Running predictions...</span>
+                        </div>
+                        <div class="flex items-center gap-3 text-gray-300">
+                            <i class="fa-solid fa-circle-notch fa-spin text-blue-500" x-show="scanProgress >= 95 && scanStatus !== 'complete'"></i>
+                            <i class="fa-solid fa-check text-green-500" x-show="scanStatus === 'complete'"></i>
+                            <span>Generating explanations</span>
+                        </div>
+                    </div>
+                    
+                    <div class="text-center mt-6 text-sm text-gray-400" id="estimated-time">
+                        Estimated: ~12 seconds remaining
+                    </div>
+                </div>
+                
+                <!-- Completed Dashboard State -->
+                <div x-show="scanStatus === 'complete'" x-cloak>
+                     <button @click="currentTab = 'repos'; scanStatus='';" class="mb-4 text-sm text-gray-400 hover:text-gray-200"><i class="fa-solid fa-arrow-left"></i> Back to Repositories</button>
+                     
+                    <!-- Confidence Assessment Section -->
+                    <div id="confidence-section" class="hidden mb-6">
+                        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                            <div class="flex items-center gap-3 mb-3">
+                                <i class="fa-solid fa-shield-halved text-blue-500"></i>
+                                <h3 class="text-sm font-semibold text-gray-100">Prediction Confidence</h3>
+                                <span id="confidence-badge" class="text-xs px-2 py-1 rounded-full"></span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4 mb-3">
+                                <div class="text-center">
+                                    <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Confidence Score</div>
+                                    <div id="confidence-score" class="text-lg font-bold text-gray-100">0.00</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Reliability</div>
+                                    <div id="confidence-message" class="text-sm text-gray-100"></div>
+                                </div>
+                            </div>
+                            <div id="confidence-warnings" class="space-y-2">
+                                <!-- Warnings will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Effort-Aware Recommendations Section -->
+                    <div id="effort-section" class="hidden mb-6">
+                        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                            <div class="flex items-center gap-3 mb-3">
+                                <i class="fa-solid fa-balance-scale text-green-500"></i>
+                                <h3 class="text-sm font-semibold text-gray-100">Effort-Aware Recommendations</h3>
+                                <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded-full">Risk per LOC</span>
+                            </div>
+                            <div class="grid grid-cols-4 gap-4 mb-3">
+                                <div class="text-center">
+                                    <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Files to Review</div>
+                                    <div id="effort-files-count" class="text-lg font-bold text-gray-100">0</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Total LOC</div>
+                                    <div id="effort-total-loc" class="text-lg font-bold text-gray-100">0</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Risk Captured</div>
+                                    <div id="effort-risk-captured" class="text-lg font-bold text-gray-100">0.00</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Efficiency</div>
+                                    <div id="effort-efficiency" class="text-lg font-bold text-gray-100">0.00</div>
+                                </div>
+                            </div>
+                            <div id="effort-recommendations" class="space-y-2">
+                                <!-- Recommendations will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                     
+                    <!-- Page 3 - Dashboard (Three-Column Layout) -->
+                    <div class="grid grid-cols-12 gap-6 mb-6">
+                        <!-- Left Column - Repo Health Summary -->
+                        <div class="col-span-3">
+                            <div class="github-card p-6">
+                                <h3 class="text-lg font-bold text-white mb-4">HEALTH SCORE</h3>
+                                <div class="mb-6">
+                                    <div class="flex items-center justify-center mb-2">
+                                        <div class="text-4xl font-bold text-green-400" id="health-score">68</div>
+                                        <div class="text-sm text-gray-400 ml-2">/ 100</div>
+                                    </div>
+                                    <div class="text-center text-sm text-gray-400 mb-4">OVERALL RISK</div>
+                                </div>
+                                
+                                <div class="space-y-3 mb-6">
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-red-400 font-medium">High Risk</span>
+                                        <span class="text-white font-bold" id="high-risk-count">11</span>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-yellow-400 font-medium">Medium Risk</span>
+                                        <span class="text-white font-bold" id="medium-risk-count">8</span>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-green-400 font-medium">Low Risk</span>
+                                        <span class="text-white font-bold" id="low-risk-count">15</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- Bottom Charts -->
+                                <div class="space-y-4">
+                                    <div>
+                                        <h4 class="text-sm font-semibold text-gray-400 mb-2">Risk Trend</h4>
+                                        <canvas id="risk-trend-chart" width="200" height="100"></canvas>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-sm font-semibold text-gray-400 mb-2">Bug Types</h4>
+                                        <canvas id="bug-type-chart" width="200" height="100"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Centre Column - Top Risky Files -->
+                        <div class="col-span-6">
+                            <div class="github-card p-6">
+                                <h3 class="text-lg font-bold text-white mb-4">HIGHEST RISK FILES</h3>
+                                <div class="space-y-3" id="top-risky-files">
+                                    <div class="border-l-4 border-red-500 pl-4 py-2">
+                                        <div class="flex justify-between items-start">
+                                            <div>
+                                                <div class="font-mono text-sm text-white mb-1">models.py</div>
+                                                <div class="flex items-center gap-2 mb-1">
+                                                    <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">Python</span>
+                                                    <div class="flex items-center gap-1">
+                                                        <div class="w-20 bg-gray-700 rounded-full h-2">
+                                                            <div class="bg-red-500 h-2 rounded-full" style="width: 78%"></div>
+                                                        </div>
+                                                        <span class="text-sm text-gray-400">78%</span>
+                                                    </div>
+                                                </div>
+                                                <div class="text-sm text-gray-400">High churn, complex functions</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="border-l-4 border-red-500 pl-4 py-2">
+                                        <div class="flex justify-between items-start">
+                                            <div>
+                                                <div class="font-mono text-sm text-white mb-1">router.js</div>
+                                                <div class="flex items-center gap-2 mb-1">
+                                                    <span class="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">JavaScript</span>
+                                                    <div class="flex items-center gap-1">
+                                                        <div class="w-20 bg-gray-700 rounded-full h-2">
+                                                            <div class="bg-red-500 h-2 rounded-full" style="width: 74%"></div>
+                                                        </div>
+                                                        <span class="text-sm text-gray-400">74%</span>
+                                                    </div>
+                                                </div>
+                                                <div class="text-sm text-gray-400">Rapid recent changes, many authors</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="border-l-4 border-yellow-500 pl-4 py-2">
+                                        <div class="flex justify-between items-start">
+                                            <div>
+                                                <div class="font-mono text-sm text-white mb-1">Login.java</div>
+                                                <div class="flex items-center gap-2 mb-1">
+                                                    <span class="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">Java</span>
+                                                    <div class="flex items-center gap-1">
+                                                        <div class="w-20 bg-gray-700 rounded-full h-2">
+                                                            <div class="bg-yellow-500 h-2 rounded-full" style="width: 69%"></div>
+                                                        </div>
+                                                        <span class="text-sm text-gray-400">69%</span>
+                                                    </div>
+                                                </div>
+                                                <div class="text-sm text-gray-400">High complexity, low ownership</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mt-4 text-center">
+                                    <button class="github-btn-secondary text-sm">+ 8 more high-risk files</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Right Column - File Tree Heatmap -->
+                        <div class="col-span-3">
+                            <div class="github-card p-6">
+                                <h3 class="text-lg font-bold text-white mb-4">FILE TREE</h3>
+                                <div class="space-y-2" id="file-tree-heatmap">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fa-solid fa-folder text-yellow-400"></i>
+                                        <span class="text-sm text-white">src/</span>
+                                        <span class="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">HIGH</span>
+                                    </div>
+                                    <div class="ml-4 space-y-1">
+                                        <div class="flex items-center gap-2">
+                                            <i class="fa-solid fa-folder text-yellow-400"></i>
+                                            <span class="text-sm text-gray-300">auth/</span>
+                                            <span class="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs">HIGH</span>
+                                        </div>
+                                        <div class="ml-4 space-y-1">
+                                            <div class="flex items-center gap-2">
+                                                <i class="fa-solid fa-file text-blue-400"></i>
+                                                <span class="text-sm text-gray-400">models.py</span>
+                                                <div class="w-12 bg-gray-700 rounded-full h-1">
+                                                    <div class="bg-red-500 h-1 rounded-full" style="width: 78%"></div>
+                                                </div>
+                                                <span class="text-xs text-gray-500">78%</span>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <i class="fa-solid fa-file text-blue-400"></i>
+                                                <span class="text-sm text-gray-400">login.py</span>
+                                                <div class="w-12 bg-gray-700 rounded-full h-1">
+                                                    <div class="bg-red-500 h-1 rounded-full" style="width: 71%"></div>
+                                                </div>
+                                                <span class="text-xs text-gray-500">71%</span>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <i class="fa-solid fa-folder text-yellow-400"></i>
+                                            <span class="text-sm text-gray-300">utils/</span>
+                                            <span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">LOW</span>
+                                        </div>
+                                        <div class="ml-4 space-y-1">
+                                            <div class="flex items-center gap-2">
+                                                <i class="fa-solid fa-file text-blue-400"></i>
+                                                <span class="text-sm text-gray-400">helpers.py</span>
+                                                <div class="w-12 bg-gray-700 rounded-full h-1">
+                                                    <div class="bg-green-500 h-1 rounded-full" style="width: 22%"></div>
+                                                </div>
+                                                <span class="text-xs text-gray-500">22%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <i class="fa-solid fa-folder text-yellow-400"></i>
+                                        <span class="text-sm text-white">tests/</span>
+                                        <span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">SAFE</span>
+                                    </div>
+                                    <div class="ml-4 space-y-1">
+                                        <div class="flex items-center gap-2">
+                                            <i class="fa-solid fa-file text-blue-400"></i>
+                                            <span class="text-sm text-gray-400">test_auth.py</span>
+                                            <div class="w-12 bg-gray-700 rounded-full h-1">
+                                                <div class="bg-green-500 h-1 rounded-full" style="width: 9%"></div>
+                                            </div>
+                                            <span class="text-xs text-gray-500">9%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- File Detail Panel (Page 4 - Slide-in) -->
+                    <div id="file-detail-panel" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+                        <div class="github-card p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <div class="flex items-center gap-3 mb-2">
+                                        <span class="font-mono text-sm text-gray-300" id="detail-filepath">src/auth/models.py</span>
+                                        <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">Python</span>
+                                    </div>
+                                    <div class="flex items-center gap-4">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-2xl font-bold text-red-400">78%</span>
+                                            <span class="px-2 py-1 bg-red-500 rounded text-xs font-bold">HIGH</span>
+                                        </div>
+                                        <div class="text-sm text-gray-400">
+                                            <span class="text-yellow-400">Logic error</span> | High (0.81)
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onclick="document.getElementById('file-detail-panel').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                                    <i class="fa-solid fa-xmark text-lg"></i>
+                                </button>
+                            </div>
+                            
+                            <div class="space-y-6">
+                                <div>
+                                    <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">WHY IS THIS FILE RISKY?</h4>
+                                    <div class="space-y-2">
+                                        <div class="flex items-start gap-2">
+                                            <span class="text-red-400">-</span>
+                                            <span class="text-sm text-gray-300">Changed 19 times this month - unusually high activity</span>
+                                        </div>
+                                        <div class="flex items-start gap-2">
+                                            <span class="text-red-400">-</span>
+                                            <span class="text-sm text-gray-300">Contains highly complex functions (avg complexity 15.2)</span>
+                                        </div>
+                                        <div class="flex items-start gap-2">
+                                            <span class="text-yellow-400">-</span>
+                                            <span class="text-sm text-gray-300">Functions have many parameters on average (4.1 params)</span>
+                                        </div>
+                                        <div class="flex items-start gap-2">
+                                            <span class="text-yellow-400">-</span>
+                                            <span class="text-sm text-gray-300">Multiple authors, low ownership concentration</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">RECOMMENDATION</h4>
+                                    <div class="bg-gray-900 border-l-4 border-yellow-500 p-3">
+                                        <div class="text-sm text-gray-300">
+                                            Refactor _encode_files (complexity 21) - aim for < 10.<br>
+                                            Add tests for the authentication flow edge cases.
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">FEATURE CONTRIBUTIONS</h4>
+                                    <div class="space-y-2">
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-sm text-gray-300">commits_1m</span>
+                                            <div class="flex items-center gap-2">
+                                                <div class="w-32 bg-gray-700 rounded-full h-2">
+                                                    <div class="bg-green-500 h-2 rounded-full" style="width: 88%"></div>
+                                                </div>
+                                                <span class="text-sm text-green-400">+0.38</span>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-sm text-gray-300">avg_complexity</span>
+                                            <div class="flex items-center gap-2">
+                                                <div class="w-32 bg-gray-700 rounded-full h-2">
+                                                    <div class="bg-green-500 h-2 rounded-full" style="width: 75%"></div>
+                                                </div>
+                                                <span class="text-sm text-green-400">+0.31</span>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-sm text-gray-300">ownership</span>
+                                            <div class="flex items-center gap-2">
+                                                <div class="w-32 bg-gray-700 rounded-full h-2">
+                                                    <div class="bg-red-500 h-2 rounded-full" style="width: 20%"></div>
+                                                </div>
+                                                <span class="text-sm text-red-400">-0.08 (reduces risk)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="flex justify-center gap-4 pt-4 border-t border-gray-700">
+                                    <button class="github-btn-secondary">
+                                        <i class="fa-thumbs-up mr-2"></i>
+                                        Accurate
+                                    </button>
+                                    <button class="github-btn-secondary">
+                                        <i class="fa-thumbs-down mr-2"></i>
+                                        Not Accurate
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== TAB: PR ANALYZER ====== -->
+            <div x-show="currentTab === 'pr-analyzer'" x-cloak x-transition.opacity>
+                <div class="github-card p-6 max-w-4xl mx-auto">
+                    <div class="flex items-center gap-6 mb-8">
+                        <div class="flex items-center justify-center w-14 h-14 bg-gray-800 rounded-xl shadow-sm border border-gray-700">
+                            <i class="fa-solid fa-code-pull-request text-blue-500 text-xl"></i>
+                        </div>
+                        <div class="flex-1">
+                            <h2 class="text-3xl font-bold github-text-primary mb-2">PR Risk Analyzer</h2>
+                            <p class="text-lg github-text-soft">Analyze Pull Request risk using GitHub API and ML insights</p>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
+                        {% if auth.is_authenticated %}
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Select an open PR from your GitHub:</label>
+                            <div class="flex gap-2">
+                                <select id="pr-dropdown" class="github-input flex-1 px-4 py-3 text-md bg-gray-900 border border-gray-700 rounded">
+                                    <option value="">Loading your open PRs...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="flex items-center my-4"><div class="flex-grow border-t border-gray-700"></div><span class="px-3 text-gray-500 text-sm">OR</span><div class="flex-grow border-t border-gray-700"></div></div>
+                        {% endif %}
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Manual Pull Request URL</label>
+                        <div class="flex gap-4">
+                            <input type="text" id="pr-url" placeholder="https://github.com/owner/repo/pull/123" class="github-input flex-1 px-6 py-4 text-lg">
+                            <button onclick="analyzePR()" class="github-btn-scan flex items-center gap-3 px-8 py-4 text-lg">
+                                <i class="fa-solid fa-search"></i>
+                                <span class="font-semibold">Analyze PR</span>
+                            </button>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-400">
+                            <i class="fa-solid fa-info-circle"></i>
+                            Enter a GitHub PR URL or select from the dropdown to analyze risk factors
+                        </div>
+                    </div>
+                    
+                    <!-- PR Analysis Results -->
+                    <div id="pr-results" class="hidden">
+                        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+                            <h3 class="text-lg font-semibold text-gray-100 mb-4">PR Information</h3>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <div class="text-sm text-gray-400">Title</div>
+                                    <div id="pr-title" class="text-gray-100 font-medium"></div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-gray-400">Author</div>
+                                    <div id="pr-author" class="text-gray-100 font-medium"></div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-gray-400">State</div>
+                                    <div id="pr-state" class="text-gray-100 font-medium"></div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-gray-400">Files Changed</div>
+                                    <div id="pr-files-changed" class="text-gray-100 font-medium"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+                            <h3 class="text-lg font-semibold text-gray-100 mb-4">Author Experience</h3>
+                            <div class="grid grid-cols-3 gap-4 mb-4">
+                                <div class="text-center">
+                                    <div id="author-experience" class="text-2xl font-bold text-gray-100">-</div>
+                                    <div class="text-sm text-gray-400">Experience Level</div>
+                                </div>
+                                <div class="text-center">
+                                    <div id="author-commits" class="text-2xl font-bold text-gray-100">0</div>
+                                    <div class="text-sm text-gray-400">Repo Commits</div>
+                                </div>
+                                <div class="text-center">
+                                    <div id="author-contributions" class="text-2xl font-bold text-gray-100">0</div>
+                                    <div class="text-sm text-gray-400">Total Contributions</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+                            <h3 class="text-lg font-semibold text-gray-100 mb-4">Risk Analysis</h3>
+                            <div class="grid grid-cols-4 gap-4 mb-4">
+                                <div class="text-center">
+                                    <div id="pr-risk-score" class="text-4xl font-bold text-gray-100">0.00</div>
+                                    <div class="text-sm text-gray-400">Risk Score</div>
+                                </div>
+                                <div class="text-center">
+                                    <div id="pr-risk-level" class="text-2xl font-bold text-gray-100">-</div>
+                                    <div class="text-sm text-gray-400">Risk Level</div>
+                                </div>
+                                <div class="text-center">
+                                    <div id="pr-complexity" class="text-2xl font-bold text-gray-100">-</div>
+                                    <div class="text-sm text-gray-400">Complexity</div>
+                                </div>
+                                <div class="text-center">
+                                    <div id="pr-bug-areas" class="text-2xl font-bold text-gray-100">0</div>
+                                    <div class="text-sm text-gray-400">Past Bug Areas</div>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900 rounded p-4">
+                                <div class="text-sm font-medium text-gray-100 mb-2">Recommendation</div>
+                                <div id="pr-recommendation" class="text-sm text-gray-300"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                            <h3 class="text-lg font-semibold text-gray-100 mb-4">File Risk Analysis</h3>
+                            <div id="pr-file-risks" class="space-y-2">
+                                <!-- File risks will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== TAB: MODEL & EXPLAINABILITY ====== -->
+            <div x-show="currentTab === 'model'" x-cloak x-transition.opacity>
+                <!-- Model Performance Summary -->
+                <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+                    <h3 class="text-xl font-semibold text-gray-100 mb-4">Model Performance Summary</h3>
+                    <div class="grid grid-cols-4 gap-4">
+                        <div class="text-center">
+                            <div class="text-3xl font-bold text-green-500">RF</div>
+                            <div class="text-sm text-gray-400">Best Overall Model</div>
+                            <div class="text-lg font-semibold text-gray-100">F1: 0.79</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-3xl font-bold text-blue-500">9</div>
+                            <div class="text-sm text-gray-400">Projects Evaluated</div>
+                            <div class="text-lg font-semibold text-gray-100">4,275 files</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-3xl font-bold text-purple-500">91.3%</div>
+                            <div class="text-sm text-gray-400">Best Top-20% Recall</div>
+                            <div class="text-lg font-semibold text-gray-100">FastAPI</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-3xl font-bold text-orange-500">100%</div>
+                            <div class="text-sm text-gray-400">Perfect Precision@10</div>
+                            <div class="text-lg font-semibold text-gray-100">FastAPI</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cross-Project Performance -->
+                <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+                    <h3 class="text-xl font-semibold text-gray-100 mb-4">Cross-Project Performance Analysis</h3>
+                    <div class="grid grid-cols-3 gap-4 mb-6">
+                        <div class="text-center p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+                            <div class="text-2xl font-bold text-green-400">Excellent</div>
+                            <div class="text-sm text-gray-400">FastAPI, Flask, httpx</div>
+                            <div class="text-xs text-gray-300">F1: 0.80-0.92, Recall@10: 43-100%</div>
+                        </div>
+                        <div class="text-center p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                            <div class="text-2xl font-bold text-yellow-400">Moderate</div>
+                            <div class="text-sm text-gray-400">celery, sqlalchemy, axios</div>
+                            <div class="text-xs text-gray-300">F1: 0.79-0.90, Recall@10: 6-15%</div>
+                        </div>
+                        <div class="text-center p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                            <div class="text-2xl font-bold text-red-400">Challenging</div>
+                            <div class="text-sm text-gray-400">express, guava</div>
+                            <div class="text-xs text-gray-300">F1: 0.23-0.45, Recall@10: 1-86%</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Detailed Performance Table -->
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b border-gray-700">
+                                    <th class="text-left py-2 px-3 text-gray-400">Repository</th>
+                                    <th class="text-center py-2 px-3 text-gray-400">Best Model</th>
+                                    <th class="text-center py-2 px-3 text-gray-400">F1 Score</th>
+                                    <th class="text-center py-2 px-3 text-gray-400">PR-AUC</th>
+                                    <th class="text-center py-2 px-3 text-gray-400">Recall@10</th>
+                                    <th class="text-center py-2 px-3 text-gray-400">Precision@10</th>
+                                    <th class="text-center py-2 px-3 text-gray-400">Defect@Top20%</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cross-project-table">
+                                <!-- Will be populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Model Comparison -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Model Comparison Chart -->
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-100 mb-4">Model Comparison (RF vs XGB vs LR)</h3>
+                        <div class="h-64">
+                            <canvas id="model-comparison-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- Feature Importance -->
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-100 mb-4">Top 10 Important Features</h3>
+                        <div class="h-64">
+                            <canvas id="importance-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Explainability Insights -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Risk Distribution -->
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-100 mb-4">Risk Distribution Analysis</h3>
+                        <div class="h-64">
+                            <canvas id="histogram-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- Repository Health Trend -->
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                        <h3 class="text-lg font-semibold text-gray-100 mb-4">Repository Health Trends</h3>
+                        <div class="h-64">
+                            <canvas id="health-trend-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Insights & Recommendations -->
+                <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                    <h3 class="text-xl font-semibold text-gray-100 mb-4">Key Insights & Recommendations</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i class="fa-solid fa-lightbulb text-blue-400"></i>
+                                <h4 class="font-semibold text-blue-400">Operational Excellence</h4>
+                            </div>
+                            <ul class="text-sm text-gray-300 space-y-1">
+                                <li>Review top-10 files catches 43-100% of bugs</li>
+                                <li>FastAPI: Perfect precision with 100% accuracy</li>
+                                <li>httpx: 100% recall in top-10 files</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i class="fa-solid fa-chart-line text-green-400"></i>
+                                <h4 class="font-semibold text-green-400">Model Insights</h4>
+                            </div>
+                            <ul class="text-sm text-gray-300 space-y-1">
+                                <li>Random Forest: Best overall performance</li>
+                                <li>Logistic Regression: Best for Flask (F1=0.92)</li>
+                                <li>XGBoost: Best for Express precision</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="p-4 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i class="fa-solid fa-brain text-purple-400"></i>
+                                <h4 class="font-semibold text-purple-400">Feature Analysis</h4>
+                            </div>
+                            <ul class="text-sm text-gray-300 space-y-1">
+                                <li>25 features selected from 41 original</li>
+                                <li>Git metrics most predictive</li>
+                                <li>Temporal features crucial for performance</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== TAB: MODEL EVAL ====== -->
+            <div x-show="currentTab === 'model'" x-cloak x-transition.opacity>
+                <div class="github-card p-6 max-w-4xl mx-auto">
+                    <h2 class="text-lg font-semibold mb-4 border-b border-gray-700 pb-2 text-gray-100">Model Evaluation Baseline</h2>
+                    <div class="grid grid-cols-4 gap-6 mb-6">
+                        <div class="border border-gray-700 rounded p-4 text-center bg-gray-800">
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Precision</div>
+                            <div class="text-3xl font-bold text-gray-100" id="m-precision">0.00</div>
+                        </div>
+                        <div class="border border-gray-700 rounded p-4 text-center bg-gray-800">
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Recall</div>
+                            <div class="text-3xl font-bold text-gray-100" id="m-recall">0.00</div>
+                        </div>
+                        <div class="border border-gray-700 rounded p-4 text-center bg-gray-800">
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">F1 Score</div>
+                            <div class="text-3xl font-bold text-gray-100" id="m-f1">0.00</div>
+                        </div>
+                        <div class="border border-gray-700 rounded p-4 text-center bg-gray-800">
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">ROC-AUC</div>
+                            <div class="text-3xl font-bold text-gray-100" id="m-roc">0.00</div>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 leading-relaxed mb-6">
+                        These metrics represent the classifier's performance evaluating risk for the current target repository relative to its True Positives labeled by Bug Predictor's SZZ Engine. A model with high Precision avoids falsely flagging safe files, while high Recall ensures few genuinely defect-prone files slip through. If metrics read 0.0, the target repository may be too new, or lack semantic bug-fix tracing history in its main branch.
+                    </p>
+                    
+                    <!-- Temporal Validation Section -->
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
+                        <div class="flex items-center gap-3 mb-3">
+                            <i class="fa-solid fa-clock-rotate-left text-blue-500"></i>
+                            <h3 class="text-sm font-semibold text-gray-100">Temporal Validation</h3>
+                            <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded-full">Chronological Split</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-4 mb-3">
+                            <div class="text-center">
+                                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Train Period</div>
+                                <div class="text-lg font-bold text-gray-100" id="temporal-train">70%</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Validation Period</div>
+                                <div class="text-lg font-bold text-gray-100" id="temporal-val">15%</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Test Period</div>
+                                <div class="text-lg font-bold text-gray-100" id="temporal-test">15%</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm text-gray-300">
+                            <i class="fa-solid fa-check-circle text-green-500" id="temporal-status"></i>
+                            <span id="temporal-message">Chronological validation prevents future leakage</span>
+                        </div>
+                        <div class="mt-3 text-xs text-gray-400">
+                            <i class="fa-solid fa-info-circle"></i>
+                            Model trains on historical data to predict future defects, mimicking real-world usage
+                        </div>
+                    </div>
+                    
+                    <!-- Top-K Ranking Evaluation Section -->
+                    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
+                        <div class="flex items-center gap-3 mb-3">
+                            <i class="fa-solid fa-ranking-star text-orange-500"></i>
+                            <h3 class="text-sm font-semibold text-gray-100">Top-K Ranking Evaluation</h3>
+                            <span class="text-xs bg-orange-500/20 text-orange-400 px-2 py-1 rounded-full">Operational Metrics</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4 mb-3">
+                            <div class="text-center">
+                                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Recall@10</div>
+                                <div class="text-lg font-bold text-gray-100" id="topk-recall-10">0.00</div>
+                                <div class="text-xs text-gray-400">of bugs caught in top 10</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Precision@10</div>
+                                <div class="text-lg font-bold text-gray-100" id="topk-precision-10">0.00</div>
+                                <div class="text-xs text-gray-400">of top 10 actually buggy</div>
+                            </div>
+                        </div>
+                        <div class="bg-gray-900 rounded p-3 mb-3">
+                            <div class="text-sm font-medium text-gray-100 mb-2">Daily Review Guidance</div>
+                            <div class="text-xs text-gray-300" id="topk-guidance">
+                                Review top 10 files for maximum bug coverage
+                            </div>
+                        </div>
+                        <div class="text-xs text-gray-400">
+                            <i class="fa-solid fa-lightbulb"></i>
+                            Answers: "Which files should we inspect today?" - Operational focus for managers
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-6 pt-6 border-t border-gray-700">
+                        <div>
+                            <h3 class="text-sm font-semibold mb-3 text-gray-100">Feature Importance Drivers</h3>
+                            <canvas id="c-importance" style="height: 250px;"></canvas>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold mb-3 text-gray-100">Risk Baseline Distribution</h3>
+                            <canvas id="c-histogram" style="height: 250px;"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====== TAB: ABOUT ====== -->
+            <div x-show="currentTab === 'about'" x-cloak x-transition.opacity>
+                <div class="github-card p-8 max-w-4xl mx-auto space-y-8">
+                    <div>
+                        <h2 class="text-3xl font-bold github-text-primary mb-4">What is CodeSentinel?</h2>
+                        <p class="text-gray-300 text-lg leading-relaxed">
+                            Software bugs are expensive. Most bugs cluster in a small fraction of files. CodeSentinel uses machine learning trained on real open-source projects to predict which files in your codebase are most likely to contain bugs, so you can focus review and testing where it matters.
+                        </p>
+                    </div>
+
+                    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                        <h3 class="text-xl font-bold text-gray-100 mb-4">How it works</h3>
+                        <div class="flex items-center justify-between text-sm text-gray-300 gap-4 mb-2">
+                            <div class="flex-1 text-center p-3 bg-gray-900 rounded border border-gray-700">Source Code + Git History</div>
+                            <i class="fa-solid fa-arrow-right text-gray-500"></i>
+                            <div class="flex-1 text-center p-3 bg-gray-900 rounded border border-gray-700">Feature Extraction</div>
+                            <i class="fa-solid fa-arrow-right text-gray-500"></i>
+                            <div class="flex-1 text-center p-3 bg-blue-900/30 rounded border border-blue-800 text-blue-400">XGBoost Model</div>
+                            <i class="fa-solid fa-arrow-right text-gray-500"></i>
+                            <div class="flex-1 text-center p-3 bg-green-900/30 rounded border border-green-800 text-green-400">Calibrated Risk + SHAP</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-8">
+                        <div>
+                            <h3 class="text-xl font-bold github-text-primary mb-3">Languages Supported</h3>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">Python</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">JavaScript</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">TypeScript</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">Java</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">Go</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">Ruby</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">PHP</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">C#</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">C++</span>
+                                <span class="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm text-gray-300">Rust</span>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-bold github-text-primary mb-3">Limitations</h3>
+                            <ul class="list-disc pl-5 text-sm text-gray-400 space-y-2">
+                                <li>Requires git history (bare file upload not supported).</li>
+                                <li>Labels derived from SZZ have an estimated ~30% noise rate (standard in academic literature).</li>
+                                <li>Model generalizes best to codebases similar in style to the training repos.</li>
+                                <li>Bug type prediction is approximate (macro F1 ~0.65) — treat as a hint.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-gray-700 pt-8 mt-8">
+                        <h3 class="text-xl font-bold github-text-primary mb-4">Training Data</h3>
+                        <p class="text-gray-400 text-sm mb-4">The model is trained on a diverse set of open-source projects across multiple languages and domains to ensure generalizability.</p>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-gray-700 text-sm font-semibold text-gray-300">
+                                        <th class="py-3 px-4">Repo</th>
+                                        <th class="py-3 px-4">Language</th>
+                                        <th class="py-3 px-4 text-right">Files</th>
+                                        <th class="py-3 px-4 text-right">Buggy Files</th>
+                                        <th class="py-3 px-4 text-right">Bug Rate</th>
+                                        <th class="py-3 px-4">Domain</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-sm">
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">psf/requests</td>
+                                        <td class="py-3 px-4">Python</td>
+                                        <td class="py-3 px-4 text-right font-mono">34</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">19</td>
+                                        <td class="py-3 px-4 text-right font-mono">55.9%</td>
+                                        <td class="py-3 px-4 text-gray-400">HTTP client</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">pallets/flask</td>
+                                        <td class="py-3 px-4">Python</td>
+                                        <td class="py-3 px-4 text-right font-mono">65</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">24</td>
+                                        <td class="py-3 px-4 text-right font-mono">36.9%</td>
+                                        <td class="py-3 px-4 text-gray-400">Web framework</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">tiangolo/fastapi</td>
+                                        <td class="py-3 px-4">Python</td>
+                                        <td class="py-3 px-4 text-right font-mono">630</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">24</td>
+                                        <td class="py-3 px-4 text-right font-mono">3.8%</td>
+                                        <td class="py-3 px-4 text-gray-400">API framework</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">encode/httpx</td>
+                                        <td class="py-3 px-4">Python</td>
+                                        <td class="py-3 px-4 text-right font-mono">60</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">20</td>
+                                        <td class="py-3 px-4 text-right font-mono">33.3%</td>
+                                        <td class="py-3 px-4 text-gray-400">HTTP client</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">celery/celery</td>
+                                        <td class="py-3 px-4">Python</td>
+                                        <td class="py-3 px-4 text-right font-mono">~180</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">TBD</td>
+                                        <td class="py-3 px-4 text-right font-mono">TBD</td>
+                                        <td class="py-3 px-4 text-gray-400">Async / tasks</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">sqlalchemy/sqlalchemy</td>
+                                        <td class="py-3 px-4">Python</td>
+                                        <td class="py-3 px-4 text-right font-mono">~300</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">TBD</td>
+                                        <td class="py-3 px-4 text-right font-mono">TBD</td>
+                                        <td class="py-3 px-4 text-gray-400">ORM</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">expressjs/express</td>
+                                        <td class="py-3 px-4">JavaScript</td>
+                                        <td class="py-3 px-4 text-right font-mono">~80</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">TBD</td>
+                                        <td class="py-3 px-4 text-right font-mono">TBD</td>
+                                        <td class="py-3 px-4 text-gray-400">Web framework</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800/50 hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">axios/axios</td>
+                                        <td class="py-3 px-4">JavaScript</td>
+                                        <td class="py-3 px-4 text-right font-mono">~60</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">TBD</td>
+                                        <td class="py-3 px-4 text-right font-mono">TBD</td>
+                                        <td class="py-3 px-4 text-gray-400">HTTP client</td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-800">
+                                        <td class="py-3 px-4 font-mono text-blue-400">google/guava</td>
+                                        <td class="py-3 px-4">Java</td>
+                                        <td class="py-3 px-4 text-right font-mono">~400</td>
+                                        <td class="py-3 px-4 text-right font-mono text-red-400">TBD</td>
+                                        <td class="py-3 px-4 text-right font-mono">TBD</td>
+                                        <td class="py-3 px-4 text-gray-400">Utility library</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-gray-700 pt-8 mt-8">
+                        <h3 class="text-xl font-bold github-text-primary mb-4">Model Performance</h3>
+                        <p class="text-gray-400 text-sm mb-4">We use cross-project evaluation (train on N-1 repos, test on unseen 1 repo) to ensure the model generalizes to new codebases rather than just memorizing project-specific quirks.</p>
+                        
+                        <div class="grid grid-cols-2 gap-8 mb-6">
+                            <div>
+                                <h4 class="text-sm font-semibold mb-3 text-gray-300">Ablation Study: Feature Sets</h4>
+                                <canvas id="ablation-chart" style="height: 250px;"></canvas>
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold mb-3 text-gray-300">What the risk score means</h4>
+                                <div class="bg-blue-900/20 border border-blue-800 rounded-lg p-5">
+                                    <i class="fa-solid fa-circle-info text-blue-400 mb-3 text-xl"></i>
+                                    <p class="text-gray-300 text-sm leading-relaxed italic">
+                                        "A score of 78% does not mean 78% certainty of a bug. It means this file ranks in the highest risk tier based on all signals combined. The model is calibrated: its average predicted probability matches the actual bug rate in the training data (17% in both cases), so it is honest rather than overconfident."
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-gray-700 text-sm font-semibold text-gray-300">
+                                        <th class="py-3 px-4">Target Repo</th>
+                                        <th class="py-3 px-4">Model</th>
+                                        <th class="py-3 px-4 text-right">F1 Score</th>
+                                        <th class="py-3 px-4 text-right">PR-AUC</th>
+                                        <th class="py-3 px-4 text-right">Recall@10%</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-sm" id="about-cross-project-table">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </main>
+    </div>
+    {% endif %}
+
+    <script src="/static/js/app_fixed.js"></script>
+</body>
+</html>

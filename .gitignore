@@ -1,11 +1,26 @@
+# Development notes (merged documentation)
+DEVELOPMENT_NOTES.md
+CLEANUP_SUMMARY.md
+COMMIT_MESSAGE.txt
+PUSH_READY.md
+
+# Training output
+output.md
+
 # ML artifacts
 ml/models/*.pkl
 ml/plots/*.png
 ml/cache/
 ml/training_log.jsonl
+ml/benchmarks.json
+model/
 
 # Training datasets
 dataset/*/
+!dataset/README.md
+
+# Cache directories
+.cache/
 
 # Python
 __pycache__/
@@ -14,6 +29,7 @@ __pycache__/
 *.egg-info/
 venv/
 .venv/
+*.pyc
 
 # Environment
 .env
@@ -21,28 +37,21 @@ venv/
 
 # Database
 *.db
+*.sqlite
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# Old structure (to be removed)
-data/
-backend/core/
-backend/api/
-backend/services/
-backend/utils/
-docs/
-static/
-templates/
-explainability/
-feature_engineering/
-git_mining/
-model/
-static_analysis/
-bug_type_classification/
-frontend/components/
-frontend/pages/
-scripts/
-tests/
--p/
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+temp_*/

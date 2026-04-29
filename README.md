@@ -2,18 +2,18 @@
 
 Predicts which files in a Git repository are most likely to contain bugs using ML + SHAP explainability.
 
-## ✅ Project Structure (Clean & Simple)
+## ✅ Project Structure
 
 ```
 ai-bug-predictor/
-├── backend/           # All Python modules (analysis, ML, features, etc.)
+├── backend/           # Core ML & analysis modules
 ├── frontend/          # Web UI (templates + assets)
 ├── ml/                # Trained models + SHAP plots
 ├── dataset/           # Training repositories
 ├── main.py            # Training pipeline
 ├── bug_predictor.py   # CLI tool
 ├── app_ui.py          # Flask web app
-└── test_imports.py    # Import verification script
+└── DOCUMENTATION.md   # Complete technical docs
 ```
 
 ## 🚀 Quick Start
@@ -23,46 +23,56 @@ ai-bug-predictor/
 pip install -r requirements.txt
 ```
 
-### 2. Clone Training Datasets
-```bash
-git clone https://github.com/psf/requests dataset/requests
-git clone https://github.com/pallets/flask dataset/flask
-```
-
-### 3. Verify Setup
+### 2. Verify Setup
 ```bash
 python test_imports.py
 ```
 
-### 4. Train Model
-```bash
-python main.py
-```
-
-### 5. Run Web UI
-```bash
-python app_ui.py
-```
-Visit http://localhost:5000 (Press Ctrl+C to stop)
-
-## 📊 CLI Usage
-
-Analyze a single repository:
+### 3. Analyze a Repository (CLI)
 ```bash
 python bug_predictor.py dataset/requests
 ```
 
+### 4. Run Web UI (Optional)
+```bash
+python app_ui.py
+```
+Visit http://localhost:5000
+
+## 📊 Example Output
+
+```
+  #1. adapters.py
+      Risk: 89.6% | Tier: CRITICAL | LOC: 379
+      Why risky: · Modified 4.7× more than repo median (14 commits)
+                 · Strong bug memory (1.013), increases defect risk
+                 · Contains very long functions (107 lines)
+```
+
 ## 🎯 Features
 
-- **ML Models**: LR → Random Forest → XGBoost with cross-project validation
+- **ML Models**: Random Forest with isotonic calibration
 - **SZZ Algorithm**: Line-level git blame for bug labeling
-- **SHAP Explanations**: Global + local feature importance
+- **SHAP Explanations**: Human-readable risk explanations
+- **Per-Repo Ranking**: Tiers assigned within each repository
+- **Bug Classification**: 6 bug types (performance, security, etc.)
 - **Web Dashboard**: GitHub OAuth, real-time scanning, PR analysis
-- **Bug Classification**: Categorizes bugs by type (logic, performance, security, etc.)
 
 ## 📈 Performance
 
-Average F1: 0.74 | Average PR-AUC: 0.84 (cross-project validation)
+- **PR-AUC**: 0.940 (elite ranking quality)
+- **ROC-AUC**: 0.932 (strong discrimination)
+- **F1 Score**: 0.855 (honest benchmark)
+- **Recall@20%**: 34% of bugs in top 20% of files
+
+## 📚 Documentation
+
+See [DOCUMENTATION.md](DOCUMENTATION.md) for:
+- Complete technical details
+- API reference
+- Training guide
+- Troubleshooting
+- Security & scalability
 
 ## 🔒 Security
 
@@ -71,6 +81,3 @@ Average F1: 0.74 | Average PR-AUC: 0.84 (cross-project validation)
 - OAuth 2.0 GitHub authentication
 - Input validation & path traversal prevention
 
-## 📝 License
-
-MIT License
