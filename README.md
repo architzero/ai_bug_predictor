@@ -36,7 +36,7 @@ Evaluated using **leave-one-project-out cross-validation** across 9 repositories
 | **PR-AUC** | **0.940** | Elite ranking quality (>0.85 = excellent) |
 | **ROC-AUC** | **0.932** | Strong discrimination (>0.90 = strong) |
 | **F1 Score** | **0.855** | Honest benchmark (5 repos ≥30 files) |
-| **Recall@20%** | **34%** | Reviewing top 20% of files catches 34% of bugs |
+| **Recall@20%** | **34.0%** | Reviewing top 20% of files catches 34% of bugs |
 | **Weighted F1** | **0.745** | Realistic metric weighted by repo size |
 
 **Key Finding**: Git process metrics (commits, churn, coupling) substantially outperform static complexity metrics in isolation. Combined features achieve the highest PR-AUC (0.940).
@@ -450,14 +450,6 @@ Trained on 9 open-source projects:
 - **Java**: guava
 
 Total: **1,654 files**, **126,382 commits** analyzed
-
----
-
-## 📧 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/ai-bug-predictor/issues)
-- **Documentation**: See [docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md)
-- **Email**: your.email@example.com
 
 ---
 
