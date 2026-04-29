@@ -101,13 +101,15 @@ def run(repo_input):
         print(f"\n⚠  WARNING: Small repository detected ({len(df)} files)")
         print(f"   Results are directional only. Predictions more reliable for repos with 25+ files.")
         print(f"   Confidence scores will reflect this limitation.")
+        print(f"   Risk scores may be tightly clustered - focus on TIER rankings.")
     
     # Check for cross-language issues
     languages = df['language'].unique()
     if len(languages) > 1:
         print(f"\n⚠  WARNING: Multi-language repository detected")
         print(f"   Languages found: {', '.join(languages)}")
-        print(f"   Model trained primarily on Python - predictions for other languages may be less reliable")
+        print(f"   Model trained primarily on Python/JavaScript - predictions for other languages may be less reliable")
+        print(f"   Risk scores may cluster - focus on TIER rankings for prioritization.")
         
         python_files = len(df[df['language'] == 'python'])
         total_files = len(df)
@@ -115,11 +117,12 @@ def run(repo_input):
         if python_files > 0 and python_files < total_files:
             print(f"\n   Repository mix: {python_files} Python, {total_files - python_files} other languages")
             print(f"   Analyzing all files, but Python predictions will be most accurate")
-    elif 'python' not in languages:
-        print(f"\n⚠  WARNING: Non-Python repository detected")
+    elif 'python' not in languages and 'javascript' not in languages:
+        print(f"\n⚠  WARNING: Non-Python/JavaScript repository detected")
         print(f"   Language: {languages[0] if len(languages) > 0 else 'unknown'}")
-        print(f"   Model trained on Python - predictions may have lower accuracy")
+        print(f"   Model trained primarily on Python/JavaScript - predictions may have lower accuracy")
         print(f"   Confidence scores will reflect this uncertainty")
+        print(f"   Risk scores may cluster - focus on TIER rankings for prioritization.")
     
     df = create_labels(df, repo_path, cache_dir=SZZ_CACHE_DIR)
     df["repo"] = repo_path
@@ -132,6 +135,15 @@ def run(repo_input):
     df, confidence_result = predict(model, df, return_confidence=True)
     print(f"   ✓ Predicted risk for {len(df)} files")
     print(f"   Confidence: {confidence_result['confidence_level']} ({confidence_result['confidence_score']:.2f})")
+    
+    # Check for probability clustering
+    risk_std = df['risk'].std()
+    risk_range = df['risk'].max() - df['risk'].min()
+    if risk_std < 0.05 or risk_range < 0.1:
+        print(f"   ⚠ Risk scores are tightly clustered (std={risk_std:.3f}, range={risk_range:.3f})")
+        print(f"     This is common for repositories very different from training data.")
+        print(f"     Focus on TIER rankings (CRITICAL/HIGH/MODERATE/LOW) for prioritization.")
+    
     if confidence_result['warnings']:
         print(f"   Warnings:")
         for warning in confidence_result['warnings']:
@@ -140,6 +152,11 @@ def run(repo_input):
     print(f"\n5. Generating explanations...")
     df = explain_prediction(model, df, save_plots=True, top_local=5)
     print(f"   ✓ Generated SHAP explanations")
+    
+    # Validate explanations are not empty
+    empty_explanations = df[df['explanation'].str.strip() == ''].shape[0]
+    if empty_explanations > 0:
+        print(f"   ⚠ {empty_explanations} files have empty explanations (will show generic message)")
 
     # Summary statistics
     print(f"\n{'='*70}")
@@ -148,11 +165,22 @@ def run(repo_input):
     print(f"  Repository: {os.path.basename(repo_path)}")
     print(f"  Files analyzed: {len(df)}")
     print(f"  Buggy files (labeled): {int(df['buggy'].sum())}")
-    print(f"  High-risk files (>0.7): {int((df['risk'] > 0.7).sum())}")
-    print(f"  Medium-risk files (0.4-0.7): {int(((df['risk'] >= 0.4) & (df['risk'] <= 0.7)).sum())}")
-    print(f"  Low-risk files (<0.4): {int((df['risk'] < 0.4).sum())}")
-    print(f"  Average risk: {df['risk'].mean():.3f}")
+    
+    # Use tier-based summary instead of absolute thresholds
+    tier_counts = df['risk_tier'].value_counts()
+    print(f"  CRITICAL tier: {tier_counts.get('CRITICAL', 0)}")
+    print(f"  HIGH tier: {tier_counts.get('HIGH', 0)}")
+    print(f"  MODERATE tier: {tier_counts.get('MODERATE', 0)}")
+    print(f"  LOW tier: {tier_counts.get('LOW', 0)}")
+    print(f"  Risk score range: {df['risk'].min():.3f} - {df['risk'].max():.3f} (std: {df['risk'].std():.3f})")
     print(f"  Prediction confidence: {confidence_result['confidence_level']}")
+    
+    # Tier distribution summary
+    print(f"\n  Risk Tier Distribution:")
+    print(f"    CRITICAL (top 10%):    {tier_counts.get('CRITICAL', 0)} files → Immediate review required")
+    print(f"    HIGH (10-25%):         {tier_counts.get('HIGH', 0)} files → Prioritize for review")
+    print(f"    MODERATE (25-50%):     {tier_counts.get('MODERATE', 0)} files → Consider for review")
+    print(f"    LOW (bottom 50%):      {tier_counts.get('LOW', 0)} files → Low priority")
 
     # Top risk files
     df_sorted = df.sort_values("risk", ascending=False)
@@ -160,9 +188,17 @@ def run(repo_input):
     print(f"\n{'='*70}")
     print(f"  TOP 10 RISK FILES (with explanations)")
     print(f"{'='*70}")
-    print(f"\n  ⚠️  IMPORTANT: Risk percentages are relative rankings within this repository.")
-    print(f"      Focus on TIER (CRI/HIG/MOD/LOW) for prioritization, not absolute %.")
-    print(f"      Tiers are based on percentile ranking: CRI=top 10%, HIG=10-25%, etc.\n")
+    print(f"\n  ⚠️  IMPORTANT: Risk scores are RELATIVE rankings within this repository.")
+    print(f"      Focus on TIER (CRITICAL/HIGH/MODERATE/LOW) for prioritization.")
+    print(f"      Tiers: CRITICAL=top 10%, HIGH=10-25%, MODERATE=25-50%, LOW=bottom 50%")
+    
+    # Check for score clustering and warn user
+    if risk_std < 0.05 or risk_range < 0.1:
+        print(f"\n  ⚠️  NOTE: Risk scores are tightly clustered (range={risk_range:.3f}).")
+        print(f"      This may indicate the repository is very different from training data.")
+        print(f"      Focus on TIER rankings rather than absolute percentages.\n")
+    else:
+        print()
     
     for rank, (_, row) in enumerate(df_sorted.head(10).iterrows(), 1):
         risk_pct = f"{row['risk']:.1%}"
@@ -171,18 +207,36 @@ def run(repo_input):
         filename = os.path.basename(str(row['file']))
         explanation = row.get('explanation', 'No explanation available')
         
+        # Format risk percentage with better precision for clustered scores
+        if risk_std < 0.05:
+            risk_display = f"{row['risk']:.3f}"  # Show 3 decimals when clustered
+        else:
+            risk_display = risk_pct
+        
         print(f"\n  #{rank}. {filename}")
-        print(f"      Risk: {risk_pct} | Tier: {tier} | LOC: {loc}")
-        print(f"      Why risky: {explanation}")
+        print(f"      Risk: {risk_display} | Tier: {tier} | LOC: {loc}")
+        if explanation and explanation.strip():
+            print(f"      Why risky: {explanation}")
+        else:
+            print(f"      Why risky: Flagged by model based on code patterns")
     
     print(f"\n{'='*70}")
     print(f"\n✓ Analysis complete!")
+    print(f"\nInterpretation Guide:")
+    print(f"  • Focus on TIER (CRITICAL/HIGH/MODERATE/LOW) for prioritization")
+    print(f"  • CRITICAL = top 10% riskiest files in THIS repository")
+    print(f"  • Risk scores are relative rankings, not absolute probabilities")
+    print(f"  • Files with similar scores should be prioritized by tier, then by LOC")
     
     plots_dir = os.path.abspath('ml/plots')
     print(f"\nSHAP plots saved to: {plots_dir}")
     print(f"  - global_bar.png: Feature importance")
     print(f"  - global_beeswarm.png: Feature distribution")
     print(f"  - local_waterfall_*.png: Per-file explanations")
+    print(f"\nFor best results:")
+    print(f"  - Review CRITICAL tier files first (top 10%)")
+    print(f"  - Use tier rankings when risk scores are clustered")
+    print(f"  - Consider LOC when prioritizing files within same tier")
     
     # Auto-open plots folder
     try:

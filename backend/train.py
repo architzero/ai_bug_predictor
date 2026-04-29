@@ -112,13 +112,11 @@ def _interpret_risk_score(prob, n_samples=None, confidence_level="High"):
 class _IsotonicWrapper:
     """Wrapper for IsotonicRegression to match sklearn classifier interface.
     
-    CRITICAL FIX: Remove probability capping to preserve discrimination.
-    Capping at 0.95-0.99 causes all high-risk files to cluster at the ceiling,
-    losing the ability to distinguish between truly critical vs high-risk files.
-    
-    Light capping (0.01-0.99) only prevents numerical issues, not discrimination loss.
+    CRITICAL FIX: Spread probabilities to avoid clustering at extremes.
+    When all predictions cluster at 0.95+, we lose discrimination ability.
+    Apply light smoothing to spread predictions while preserving ranking.
     """
-    def __init__(self, iso_reg, cap_min=0.001, cap_max=0.999):
+    def __init__(self, iso_reg, cap_min=0.01, cap_max=0.95):
         self.iso_reg = iso_reg
         self.multi_class = "ovr"  # For compatibility
         self.cap_min = cap_min
@@ -126,9 +124,21 @@ class _IsotonicWrapper:
     
     def predict_proba(self, X):
         cal_proba = self.iso_reg.transform(X.ravel())
-        # Minimal capping only to prevent numerical issues (0.001-0.999)
-        # This preserves discrimination while avoiding log(0) errors
+        
+        # Apply moderate capping to prevent extreme clustering (0.01-0.95)
+        # This preserves discrimination while avoiding all files at 95%+
         cal_proba = np.clip(cal_proba, self.cap_min, self.cap_max)
+        
+        # Apply light smoothing if predictions are too clustered
+        if len(cal_proba) > 10:
+            std = np.std(cal_proba)
+            if std < 0.05:  # Very low variance = clustering issue
+                # Spread predictions using percentile-based transformation
+                ranks = np.argsort(np.argsort(cal_proba))
+                percentiles = ranks / (len(ranks) - 1) if len(ranks) > 1 else np.array([0.5])
+                # Map percentiles to 0.2-0.9 range to preserve discrimination
+                cal_proba = 0.2 + percentiles * 0.7
+        
         return np.column_stack([1 - cal_proba, cal_proba])
 
 
@@ -1430,8 +1440,16 @@ def train_model(df, repos):
     brier_score = brier_score_loss(y_cal_final, cal_proba)
     gap         = abs(mean_pred - actual_rate)
     cal_status  = "✓ well-calibrated" if gap < 0.05 else f"⚠ gap={gap:.3f}"
+    
+    # Check for probability clustering (discrimination loss)
+    prob_std = np.std(cal_proba)
+    prob_range = cal_proba.max() - cal_proba.min()
+    if prob_std < 0.05 or prob_range < 0.1:
+        print(f"  ⚠ WARNING: Low probability variance detected (std={prob_std:.3f}, range={prob_range:.3f})")
+        print(f"    Calibration may have caused clustering. Consider retraining with different parameters.")
+    
     print(f"  Calibration  pred={mean_pred:.3f}  actual={actual_rate:.3f}  "
-          f"Brier={brier_score:.4f}  {cal_status}")
+          f"Brier={brier_score:.4f}  std={prob_std:.3f}  {cal_status}")
     
     # ── Save calibration curve plot ──────────────────────────────────────────────────
     try:

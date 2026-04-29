@@ -396,6 +396,15 @@ def _explain_feature_human_readable(feature_name, value, shap_value, direction="
         else:
             return None
     
+    if feature_name == "max_added":
+        # Context-relative threshold for large commits
+        if repo_median and ratio and value > repo_median * 3:
+            return f"Very large single change ({int(value)} lines, {ratio:.1f}× repo median)"
+        elif value > 500:  # Absolute threshold for truly massive changes
+            return f"Very large single change ({int(value)} lines added at once)"
+        else:
+            return None
+    
     if feature_name == "max_complexity":
         if value > 30:
             return f"Contains very complex functions (max complexity {int(value)})"
@@ -446,7 +455,6 @@ def _explain_feature_human_readable(feature_name, value, shap_value, direction="
         # Code churn metrics
         "lines_added": lambda v: f"Significant additions ({v:.0f} lines added)" if v > 500 else None,
         "lines_deleted": lambda v: f"Major deletions ({v:.0f} lines removed)" if v > 300 else None,
-        "max_added": lambda v: f"Very large single change ({v:.0f} lines added at once)" if v > 200 else None,
         "avg_commit_size": lambda v: f"Large average commits ({v:.1f} lines)" if v > 100 else None,
         "instability_score": lambda v: f"High instability ({v:.3f})" if v > 0.5 else None,
         "max_commit_ratio": lambda v: f"Contains massive commits ({v:.1f}x average)" if v > 3 else None,
@@ -517,10 +525,13 @@ def _generate_human_readable_explanation(shap_values, feature_names, row_data, t
     """
     # Get top contributing features
     contrib = pd.Series(shap_values, index=feature_names)
-    top_features = contrib.abs().sort_values(ascending=False).head(top_n)
+    top_features = contrib.abs().sort_values(ascending=False).head(top_n * 3)  # Get more candidates
     
     explanations = []
     for feature_name in top_features.index:
+        if len(explanations) >= top_n:
+            break
+            
         shap_val = contrib[feature_name]
         feature_val = row_data.get(feature_name, 0)
         direction = "increases" if shap_val > 0 else "decreases"
@@ -534,6 +545,12 @@ def _generate_human_readable_explanation(shap_values, feature_names, row_data, t
         # Only add non-None explanations
         if human_explanation:
             explanations.append(human_explanation)
+    
+    # Fallback: if still no explanations, provide generic one based on top SHAP feature
+    if not explanations and len(top_features) > 0:
+        top_feature = top_features.index[0]
+        top_val = row_data.get(top_feature, 0)
+        explanations.append(f"Elevated {top_feature.replace('_', ' ')} ({top_val:.2f})")
     
     return explanations
 
