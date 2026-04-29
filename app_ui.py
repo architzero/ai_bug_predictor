@@ -18,7 +18,6 @@ from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from datetime import timedelta
 from functools import wraps
-# database_v2 does not exist — all DB access goes through database.py
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 # RotatingFileHandler caps the log at 5 MB with 3 rolling backups so the
@@ -42,16 +41,16 @@ logger = logging.getLogger("app_ui")
 load_dotenv()
 
 # Import existing domain logic
-from static_analysis.analyzer import analyze_repository, get_top_functions
-from git_mining.git_miner import mine_git_data
-from feature_engineering.feature_builder import build_features, filter_correlated_features
-from feature_engineering.labeler import create_labels
-from model.predict import predict
-from model.train_model import load_model_version
-from explainability.explainer import _compute_shap, _get_features, NON_FEATURE_COLS
-from model.commit_predictor import predict_commit_risk
-from config import REPOS, SZZ_CACHE_DIR, BASE_DIR, MODEL_LATEST_PATH, GIT_FEATURES_TO_NORMALIZE
-from database import (
+from backend.analysis import analyze_repository, get_top_functions
+from backend.git_mining import mine_git_data
+from backend.features import build_features, filter_correlated_features
+from backend.labeling import create_labels
+from backend.predict import predict
+from backend.train import load_model_version
+from backend.explainer import _compute_shap, _get_features, NON_FEATURE_COLS
+from backend.commit_risk import predict_commit_risk
+from backend.config import REPOS, SZZ_CACHE_DIR, BASE_DIR, MODEL_LATEST_PATH, GIT_FEATURES_TO_NORMALIZE, TRAINING_LOG_PATH
+from backend.database import (
     DatabaseManager, 
     save_scan_results, 
     get_recent_scans, 
@@ -63,9 +62,9 @@ from database import (
 
 
 
-app = Flask(__name__)
-
-db = DatabaseManager.get_instance()
+app = Flask(__name__, 
+            template_folder='frontend/templates',
+            static_folder='frontend/assets')
 
 # CRITICAL: Secret key must be set via environment variable
 secret_key = os.environ.get("FLASK_SECRET_KEY")
@@ -89,7 +88,7 @@ limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     default_limits=["200 per hour"],
-    storage_uri="sqlite:///rate_limits.db"
+    storage_uri="memory://"
 )
 
 # Caching for expensive endpoints
@@ -129,20 +128,22 @@ logger.info("Database initialized")
 # cleanup can evict abandoned scans (where the SSE client disconnected).
 # This prevents unbounded memory growth on long-running servers. (Fix #6)
 scan_progress = {}  # {scan_id: {"progress": 0, "status": "...", "complete": False, "created_at": <float>}}
+_scan_progress_lock = threading.Lock()  # Thread-safe access to scan_progress
 _SCAN_PROGRESS_TTL_SECS = 1800  # evict entries older than 30 min
 
 
 def _evict_stale_scan_progress():
     """Remove scan_progress entries older than _SCAN_PROGRESS_TTL_SECS."""
-    now = time.time()
-    stale = [
-        sid for sid, info in scan_progress.items()
-        if now - info.get("created_at", now) > _SCAN_PROGRESS_TTL_SECS
-    ]
-    for sid in stale:
-        scan_progress.pop(sid, None)
-    if stale:
-        logger.info("Evicted %d stale scan_progress entries", len(stale))
+    with _scan_progress_lock:
+        now = time.time()
+        stale = [
+            sid for sid, info in scan_progress.items()
+            if now - info.get("created_at", now) > _SCAN_PROGRESS_TTL_SECS
+        ]
+        for sid in stale:
+            scan_progress.pop(sid, None)
+        if stale:
+            logger.info("Evicted %d stale scan_progress entries", len(stale))
 
 # ── OAuth Configuration ──
 github_client_id = os.environ.get("GITHUB_CLIENT_ID")
@@ -216,14 +217,19 @@ def init_app_state():
 
     # ── Model ──────────────────────────────────────────────────────────────────
     if not os.path.exists(MODEL_LATEST_PATH):
-        logger.info(
-            "Model not found at %s — run 'python main.py' first. "
-            "Starting in scan-only mode.",
-            MODEL_LATEST_PATH,
-        )
+        print(f"⚠  Model not found at {MODEL_LATEST_PATH}. Run 'python main.py' first.")
+        print("   The server will start but scan-only mode is available via GitHub OAuth.")
         return
-    model_data = load_model_version()
-    app_state["model"] = model_data
+    
+    # Try to load model with compatibility handling
+    try:
+        model_data = load_model_version()
+        app_state["model"] = model_data
+        print("✅ Model loaded successfully")
+    except Exception as e:
+        print(f"⚠  Model loading failed: {e}")
+        print("   Starting in scan-only mode with limited functionality")
+        app_state["model"] = None
 
     # ── Training repos ─────────────────────────────────────────────────────────
     all_data = []
@@ -259,8 +265,17 @@ def init_app_state():
     if cols_present:
         scaler = StandardScaler()
         df[cols_present] = scaler.fit_transform(df[cols_present])
-    df = filter_correlated_features(df)
-    df = predict(model_data, df)
+    try:
+        df = predict(model_data, df)
+    except Exception as e:
+        print(f"ERROR: Failed to attach risk predictions: {e}")
+        print("Starting in scan-only mode due to model compatibility issues")
+        if 'df' in locals():
+            df['risk'] = 0.5
+            df['risky'] = (df['risk'] >= 0.5).astype(int)
+        else:
+            print("ERROR: No dataframe available for risk assignment")
+            return
     df = df.sort_values("risk", ascending=False).reset_index(drop=True)
     app_state["df"] = df
 
@@ -455,6 +470,19 @@ def list_user_repos():
             timeout=10
         )
         
+        # Explicit rate limit handling
+        if resp.status_code == 403:
+            rate_limit_remaining = resp.headers.get("X-RateLimit-Remaining", "unknown")
+            rate_limit_reset = resp.headers.get("X-RateLimit-Reset", "unknown")
+            if rate_limit_remaining == "0":
+                return jsonify({
+                    "error": "GitHub API rate limit exceeded",
+                    "message": f"Rate limit will reset at {rate_limit_reset}. Please try again later.",
+                    "rate_limit_remaining": 0,
+                    "rate_limit_reset": rate_limit_reset
+                }), 429
+            return jsonify({"error": "GitHub API access forbidden", "status": 403}), 403
+        
         if resp.status_code != 200:
             return jsonify({"error": "Failed to fetch repositories from GitHub", "status": resp.status_code}), resp.status_code
 
@@ -493,38 +521,39 @@ def api_overview():
 
 def _generate_histogram():
     df = app_state["df"]
-    if df is None: return []
+    if df is None:
+        return []
     bins = [i/20 for i in range(21)]
     hist = pd.cut(df["risk"], bins=bins).value_counts().sort_index()
     return [{"bin": f"{b.left:.2f}", "count": int(c)} for b, c in hist.items()]
 
 def _get_top_risk_files():
     df = app_state["df"]
-    if df is None: return []
-    top = df.head(10)
+    if df is None:
+        return []
     return [{
         "file": os.path.basename(str(row["file"])),
         "risk": round(row["risk"], 3)
-    } for _, row in top.iterrows()]
+    } for _, row in df.head(10).iterrows()]
 
 def _generate_confusion_matrix():
     df = app_state["df"]
-    if df is None: return {"tp": 0, "fp": 0, "tn": 0, "fn": 0}
+    if df is None:
+        return {"tp": 0, "fp": 0, "tn": 0, "fn": 0}
     y_true = df.get("buggy", pd.Series([0]*len(df))).fillna(0).astype(int)
     y_pred = df.get("risky", pd.Series([0]*len(df))).fillna(0).astype(int)
-    tp = int(((y_true == 1) & (y_pred == 1)).sum())
-    fp = int(((y_true == 0) & (y_pred == 1)).sum())
-    tn = int(((y_true == 0) & (y_pred == 0)).sum())
-    fn = int(((y_true == 1) & (y_pred == 0)).sum())
-    return {"tp": tp, "fp": fp, "tn": tn, "fn": fn}
+    return {
+        "tp": int(((y_true == 1) & (y_pred == 1)).sum()),
+        "fp": int(((y_true == 0) & (y_pred == 1)).sum()),
+        "tn": int(((y_true == 0) & (y_pred == 0)).sum()),
+        "fn": int(((y_true == 1) & (y_pred == 0)).sum())
+    }
 
 def _generate_health_trend():
     df = app_state["df"]
-    if df is None or "repo" not in df.columns: return []
-    trend = df.groupby("repo").agg({
-        "risk": "mean",
-        "buggy": "sum"
-    }).reset_index()
+    if df is None or "repo" not in df.columns:
+        return []
+    trend = df.groupby("repo").agg({"risk": "mean", "buggy": "sum"}).reset_index()
     return [{
         "repo": os.path.basename(str(row["repo"])),
         "avg_risk": round(row["risk"], 3),
@@ -534,45 +563,39 @@ def _generate_health_trend():
 @app.route("/api/files")
 @cache.cached(timeout=300, query_string=True)
 def api_files():
-    # Try database first, fallback to app_state
     try:
         recent_scan = get_recent_scans(limit=1)
         if recent_scan:
-            scan_id = recent_scan[0]['scan_id']
-            files = get_high_risk_files(scan_id=scan_id, limit=500)
+            files = get_high_risk_files(scan_id=recent_scan[0]['scan_id'], limit=500)
             if files:
                 return jsonify(files)
     except Exception as e:
         logger.warning("Database query failed, using app_state: %s", e)
 
-    # Fallback to app_state
     df = app_state["df"]
-    if df is None: return jsonify([])
+    if df is None:
+        return jsonify([])
 
-    limit = min(500, len(df))
-    # Fix #15: to_dict("records") is ~50x faster than iterrows() for large DataFrames
-    rows = df.head(limit).to_dict("records")
-    files_list = []
-    for row in rows:
-        repo_name = os.path.basename(str(row["repo"]))
-        rel_path  = os.path.relpath(str(row["file"]), str(row["repo"])).replace("\\", "/")
-        files_list.append({
-            "id":         str(row["file"]),
-            "repo":       repo_name,
-            "filename":   rel_path,
-            "risk":       round(row.get("risk", 0.0), 3),
-            "buggy":      int(row.get("buggy", 0)),
-            "complexity": int(row.get("avg_complexity", 0)),
-            "coupling":   round(row.get("coupling_risk", 0.0), 2) if "coupling_risk" in row else 0.0,
-            "temporal":   round(row.get("temporal_bug_risk", 0.0), 2) if "temporal_bug_risk" in row else 0.0,
-            "commits_1m": int(row.get("commits_1m", 0)) if "commits_1m" in row else 0,
-        })
-
-    return jsonify(files_list)
+    rows = df.head(min(500, len(df))).to_dict("records")
+    return jsonify([{
+        "id": str(row["file"]),
+        "repo": os.path.basename(str(row["repo"])),
+        "filename": os.path.relpath(str(row["file"]), str(row["repo"])).replace("\\", "/"),
+        "risk": round(row.get("risk", 0.0), 3),
+        "buggy": int(row.get("buggy", 0)),
+        "complexity": int(row.get("avg_complexity", 0)),
+        "coupling": round(row.get("coupling_risk", 0.0), 2) if "coupling_risk" in row else 0.0,
+        "temporal": round(row.get("temporal_bug_risk", 0.0), 2) if "temporal_bug_risk" in row else 0.0,
+        "commits_1m": int(row.get("commits_1m", 0)) if "commits_1m" in row else 0
+    } for row in rows])
 
 @app.route("/api/file", methods=["GET"])
 def api_file_detail():
-    file_id = request.args.get("id")
+    file_id = request.args.get("id", "").strip()
+    
+    if not file_id or len(file_id) > 500 or ".." in file_id:
+        return jsonify({"error": "Invalid file ID"}), 400
+    
     df = app_state["df"]
     if df is None or file_id not in df["file"].values:
         return jsonify({"error": "File not found"}), 404
@@ -580,7 +603,6 @@ def api_file_detail():
     idx = df.index[df['file'] == file_id].tolist()[0]
     row = df.loc[idx]
     
-    # Get Function details
     top_funcs = []
     try:
         funcs = get_top_functions(file_id, top_n=5)
@@ -588,22 +610,18 @@ def api_file_detail():
     except Exception:
         pass
         
-    # Get SHAP explanations
     shap_vals = app_state["global_shap"]
     X_disp = app_state["global_shap_X"]
     
     if shap_vals is not None and len(shap_vals) > idx:
         sv = shap_vals[idx]
-        if len(sv.shape) > 1 and sv.shape[1] > 1: # if 2D array
+        if len(sv.shape) > 1 and sv.shape[1] > 1:
             sv = sv[:, 1]
             
         contribs = pd.Series(sv, index=X_disp.columns).sort_values(ascending=False)
-        top_positive = contribs[contribs > 0].head(5).to_dict()
-        top_negative = contribs[contribs < 0].tail(5).to_dict()
-        
         shap_data = {
-            "positive": [{"feature": k, "value": round(v, 4)} for k, v in top_positive.items()],
-            "negative": [{"feature": k, "value": round(v, 4)} for k, v in top_negative.items()]
+            "positive": [{"feature": k, "value": round(v, 4)} for k, v in contribs[contribs > 0].head(5).to_dict().items()],
+            "negative": [{"feature": k, "value": round(v, 4)} for k, v in contribs[contribs < 0].tail(5).to_dict().items()]
         }
     else:
         shap_data = {"positive": [], "negative": []}
@@ -621,67 +639,40 @@ _MAX_URL_LENGTH = 300
 
 
 def _validate_repo_input(raw_path: str) -> str:
-    """
-    Validate and normalise the repo path submitted to /api/scan_repo.
+    if not raw_path or len(raw_path) > _MAX_URL_LENGTH:
+        raise ValueError("Repository path or URL is required and must be under 300 characters.")
 
-    Accepts two forms:
-      - Remote URL  : must be a GitHub HTTPS or SSH URL
-      - Local path  : must be an existing directory inside BASE_DIR
-                      (no path-traversal outside the project root)
-
-    Returns the cleaned path string or raises ValueError with a user-facing
-    message that is safe to return in a JSON error response.
-    """
-    if not raw_path:
-        raise ValueError("Repository path or URL is required.")
-
-    if len(raw_path) > _MAX_URL_LENGTH:
-        raise ValueError(
-            f"Input too long — maximum {_MAX_URL_LENGTH} characters allowed."
-        )
-
-    is_remote = (
-        raw_path.startswith("https://")
-        or raw_path.startswith("http://")
-        or raw_path.startswith("git@")
-        or "github.com/" in raw_path
-    )
+    is_remote = any([
+        raw_path.startswith("https://"),
+        raw_path.startswith("http://"),
+        raw_path.startswith("git@"),
+        "github.com/" in raw_path
+    ])
 
     if is_remote:
-        # Normalise bare "github.com/owner/repo" → "https://github.com/owner/repo"
-        if not raw_path.startswith("http") and not raw_path.startswith("git@"):
+        if not raw_path.startswith(("http", "git@")):
             raw_path = "https://" + raw_path
 
-        # For HTTPS URLs, enforce an allowlisted hostname
         if raw_path.startswith("http"):
             parsed = urlparse(raw_path)
             if parsed.netloc.lower() not in _ALLOWED_REMOTE_HOSTS:
-                raise ValueError(
-                    f"Only GitHub repositories are supported. "
-                    f"Received host: '{parsed.netloc}'."
-                )
-            # Must have at least /owner/repo in the path
+                raise ValueError(f"Only GitHub repositories are supported. Received host: '{parsed.netloc}'.")
             path_parts = [p for p in parsed.path.strip("/").split("/") if p]
             if len(path_parts) < 2:
-                raise ValueError(
-                    "Invalid GitHub URL — expected format: "
-                    "https://github.com/owner/repo"
-                )
+                raise ValueError("Invalid GitHub URL — expected format: https://github.com/owner/repo")
         return raw_path.strip("-").rstrip("/")
 
-    # Local path: block traversal patterns, allow any absolute directory
     import re as _re
     if _re.search(r'\.\.[/\\]', raw_path):
         raise ValueError("Path traversal sequences ('..') are not allowed.")
+    
     try:
         resolved = os.path.realpath(raw_path)
     except OSError:
         raise ValueError(f"Invalid local path: {raw_path}")
 
-    if not os.path.isabs(resolved):
-        raise ValueError("Local path must be an absolute path.")
-    if not os.path.isdir(resolved):
-        raise ValueError(f"Directory not found: {raw_path}")
+    if not os.path.isabs(resolved) or not os.path.isdir(resolved):
+        raise ValueError("Local path must be an absolute directory.")
 
     return resolved
 
@@ -710,11 +701,12 @@ def api_scan_repo():
     # ── Launch background scan ────────────────────────────────────────────────
     scan_id = str(uuid.uuid4())
     _evict_stale_scan_progress()  # TTL cleanup (Fix #6)
-    scan_progress[scan_id] = {
-        "progress": 0, "status": "Initializing...",
-        "complete": False, "error": None,
-        "created_at": time.time(),   # for TTL eviction (Fix #6)
-    }
+    with _scan_progress_lock:
+        scan_progress[scan_id] = {
+            "progress": 0, "status": "Initializing...",
+            "complete": False, "error": None,
+            "created_at": time.time(),   # for TTL eviction (Fix #6)
+        }
 
     logger.info("Scan %s started for: %s", scan_id, repo_path)
     thread = threading.Thread(target=scan_repo_background, args=(scan_id, repo_path))
@@ -728,12 +720,19 @@ def scan_repo_background(scan_id, repo_path):
     import subprocess
     _scan_logger = logging.getLogger(f"app_ui.scan.{scan_id[:8]}")
 
+    def update_progress(progress, status, complete=False, error=None):
+        """Thread-safe progress update helper."""
+        with _scan_progress_lock:
+            scan_progress[scan_id] = {
+                "progress": progress,
+                "status": status,
+                "complete": complete,
+                "error": error,
+                "created_at": scan_progress.get(scan_id, {}).get("created_at", time.time()),
+            }
+
     try:
-        scan_progress[scan_id] = {
-            "progress": 5, "status": "Validating repository...",
-            "complete": False, "error": None,
-            "created_at": scan_progress.get(scan_id, {}).get("created_at", time.time()),
-        }
+        update_progress(5, "Validating repository...")
         # repo_path has already been validated & normalised by _validate_repo_input
         # before this thread was launched — do NOT re-normalise here (Fix #3).
         if (
@@ -748,6 +747,16 @@ def scan_repo_background(scan_id, repo_path):
                 try:
                     repo_api_url = repo_path.replace("https://github.com/", "https://api.github.com/repos/").replace(".git", "")
                     test_response = requests.get(repo_api_url, timeout=5)
+                    
+                    # Explicit rate limit handling
+                    if test_response.status_code == 403:
+                        rate_limit_remaining = test_response.headers.get("X-RateLimit-Remaining", "unknown")
+                        if rate_limit_remaining == "0":
+                            rate_limit_reset = test_response.headers.get("X-RateLimit-Reset", "unknown")
+                            update_progress(0, "Error", complete=True, 
+                                error=f"GitHub API rate limit exceeded. Resets at {rate_limit_reset}. Please try again later.")
+                            return
+                    
                     if test_response.status_code == 404:
                         is_private = True
                     elif test_response.status_code == 200:
@@ -760,11 +769,11 @@ def scan_repo_background(scan_id, repo_path):
                 
                 if is_private:
                     if "github_token" not in session:
-                        scan_progress[scan_id] = {"progress": 0, "status": "Error", "complete": True, "error": "Authentication required for private repositories"}
+                        update_progress(0, "Error", complete=True, error="Authentication required for private repositories")
                         return
                     
                     if not refresh_github_token():
-                        scan_progress[scan_id] = {"progress": 0, "status": "Error", "complete": True, "error": "Token expired - please re-authenticate"}
+                        update_progress(0, "Error", complete=True, error="Token expired - please re-authenticate")
                         return
                     
                     auth_clone_url = repo_path.replace("https://github.com", f"https://x-access-token:{session['github_token']}@github.com")
@@ -773,7 +782,7 @@ def scan_repo_background(scan_id, repo_path):
                 repo_name = repo_path.rstrip('/').split('/')[-1].replace('.git', '')
                 temp_cache_dir = os.path.join(BASE_DIR, "dataset", f"temp_{repo_name}_{uuid.uuid4().hex[:6]}")
                 
-                scan_progress[scan_id] = {"progress": 10, "status": "Cloning repository...", "complete": False, "error": None}
+                update_progress(10, "Cloning repository...")
                 
                 result = subprocess.run(
                     ["git", "clone", "--depth", "500", auth_clone_url, temp_cache_dir],
@@ -786,26 +795,25 @@ def scan_repo_background(scan_id, repo_path):
                 err_msg = "Git clone failed. Check repository URL and permissions."
                 if e.returncode == 128:
                     err_msg = "Repository not found or access denied."
-                scan_progress[scan_id] = {"progress": 0, "status": "Error", "complete": True, "error": err_msg}
+                update_progress(0, "Error", complete=True, error=err_msg)
                 return
                 
         elif not os.path.exists(repo_path) or not os.path.isdir(repo_path):
-            scan_progress[scan_id] = {"progress": 0, "status": "Error", "complete": True, "error": f"Invalid directory path: {repo_path}"}
+            update_progress(0, "Error", complete=True, error=f"Invalid directory path: {repo_path}")
             return
             
-        scan_progress[scan_id] = {"progress": 25, "status": "Analyzing code structure...", "complete": False, "error": None}
+        update_progress(25, "Analyzing code structure...")
         static_results = analyze_repository(repo_path)
         
-        scan_progress[scan_id] = {"progress": 45, "status": "Mining git history...", "complete": False, "error": None}
+        update_progress(45, "Mining git history...")
         git_results = mine_git_data(repo_path)
         
-        scan_progress[scan_id] = {"progress": 65, "status": "Engineering features...", "complete": False, "error": None,
-                                   "created_at": scan_progress.get(scan_id, {}).get("created_at", time.time())}
+        update_progress(65, "Engineering features...")
         df_repo = build_features(static_results, git_results)
         df_repo["repo"] = repo_path
 
         if len(df_repo) == 0:
-            scan_progress[scan_id] = {"progress": 0, "status": "Error", "complete": True, "error": "No valid source files or git history found"}
+            update_progress(0, "Error", complete=True, error="No valid source files or git history found")
             return
 
         # Apply the training scaler for consistent feature normalization at inference.
@@ -824,8 +832,7 @@ def scan_repo_background(scan_id, repo_path):
         # Do NOT call filter_correlated_features on an ad-hoc scan — the trained
         # model has a fixed feature list; dropping columns here can silently zero
         # out features the model depends on. (Fix #10)
-        scan_progress[scan_id] = {"progress": 80, "status": "Running predictions...", "complete": False, "error": None,
-                                   "created_at": scan_progress.get(scan_id, {}).get("created_at", time.time())}
+        update_progress(80, "Running predictions...")
         model_data = app_state["model"]
         df_repo, confidence_result = predict(model_data, df_repo, return_confidence=True)
         
@@ -834,7 +841,7 @@ def scan_repo_background(scan_id, repo_path):
             
         df_repo = df_repo.sort_values("risk", ascending=False).reset_index(drop=True)
         
-        scan_progress[scan_id] = {"progress": 90, "status": "Generating explanations...", "complete": False, "error": None}
+        update_progress(90, "Generating explanations...")
         X = _get_features(df_repo)
         features = model_data.get("features", getattr(model_data, "feature_names_in_", None)) if isinstance(model_data, dict) else getattr(model_data, "feature_names_in_", None)
         if features is not None:
@@ -847,7 +854,7 @@ def scan_repo_background(scan_id, repo_path):
         shap_vals, expected_val, X_disp = _compute_shap(raw_model, X)
         
         # Save to database
-        scan_progress[scan_id] = {"progress": 95, "status": "Saving to database...", "complete": False, "error": None}
+        update_progress(95, "Saving to database...")
         scan_record = save_scan_results(
             df=df_repo,
             scan_id=scan_id,
@@ -894,29 +901,35 @@ def scan_repo_background(scan_id, repo_path):
             }
         }
         
-        scan_progress[scan_id] = {"progress": 100, "status": "Complete", "complete": True, "error": None}
+        update_progress(100, "Complete", complete=True)
         
         # Invalidate cache after successful scan
         cache.clear()
         
     except Exception as e:
         _scan_logger.error("Scan %s failed: %s", scan_id, e, exc_info=True)
-        scan_progress[scan_id] = {"progress": 0, "status": "Error", "complete": True, "error": str(e)}
+        update_progress(0, "Error", complete=True, error=str(e))
 
 @app.route("/api/scan_progress/<scan_id>")
 def scan_progress_stream(scan_id):
     """Server-Sent Events endpoint for real-time scan progress."""
     def generate():
         while True:
-            if scan_id in scan_progress:
-                data = scan_progress[scan_id]
+            with _scan_progress_lock:
+                if scan_id in scan_progress:
+                    data = scan_progress[scan_id].copy()  # Copy to avoid holding lock during yield
+                else:
+                    data = None
+            
+            if data is not None:
                 yield f"data: {json.dumps(data)}\n\n"
                 
                 if data["complete"]:
                     # Clean up after 5 seconds
                     time.sleep(5)
-                    if scan_id in scan_progress:
-                        del scan_progress[scan_id]
+                    with _scan_progress_lock:
+                        if scan_id in scan_progress:
+                            del scan_progress[scan_id]
                     break
             else:
                 yield f"data: {{\"progress\": 0, \"status\": \"Not found\", \"complete\": true, \"error\": \"Scan not found\"}}\n\n"
@@ -1208,7 +1221,7 @@ def api_effort_recommendations():
         return jsonify({"error": "No scan data available"})
     
     try:
-        from model.train_model import _get_effort_aware_recommendations
+        from backend.train import _get_effort_aware_recommendations
         
         # Get parameters
         top_n = int(request.args.get("top_n", 10))
@@ -1230,18 +1243,37 @@ def api_effort_recommendations():
 def api_model_evaluation():
     """Get comprehensive model evaluation results from training."""
     try:
-        # Cross-project evaluation results from training
-        cross_project_data = [
-            {"repo": "requests", "model": "RF", "f1": 0.8333, "pr_auc": 0.7664, "recall10": 0.727, "precision10": 0.800, "defect20": 27.3, "n_test": 23, "n_buggy": 11},
-            {"repo": "flask", "model": "LR", "f1": 0.9167, "pr_auc": 0.9346, "recall10": 0.391, "precision10": 0.900, "defect20": 30.4, "n_test": 42, "n_buggy": 23},
-            {"repo": "fastapi", "model": "LR", "f1": 0.8000, "pr_auc": 0.8991, "recall10": 0.435, "precision10": 1.000, "defect20": 91.3, "n_test": 143, "n_buggy": 23},
-            {"repo": "httpx", "model": "RF", "f1": 0.8000, "pr_auc": 0.7996, "recall10": 1.000, "precision10": 0.600, "defect20": 50.0, "n_test": 15, "n_buggy": 6},
-            {"repo": "celery", "model": "RF", "f1": 0.9000, "pr_auc": 0.9626, "recall10": 0.078, "precision10": 1.000, "defect20": 34.1, "n_test": 224, "n_buggy": 129},
-            {"repo": "sqlalchemy", "model": "RF", "f1": 0.8382, "pr_auc": 0.8786, "recall10": 0.062, "precision10": 1.000, "defect20": 35.6, "n_test": 329, "n_buggy": 160},
-            {"repo": "express", "model": "XGB", "f1": 0.2308, "pr_auc": 0.8349, "recall10": 0.857, "precision10": 0.600, "defect20": 85.7, "n_test": 97, "n_buggy": 7},
-            {"repo": "axios", "model": "RF", "f1": 0.7921, "pr_auc": 0.8852, "recall10": 0.145, "precision10": 0.800, "defect20": 56.4, "n_test": 179, "n_buggy": 55},
-            {"repo": "guava", "model": "LR", "f1": 0.4523, "pr_auc": 0.5956, "recall10": 0.017, "precision10": 1.000, "defect20": 59.6, "n_test": 3223, "n_buggy": 591}
-        ]
+        # Try to read from training log first
+        cross_project_data = []
+        
+        if os.path.exists(TRAINING_LOG_PATH):
+            try:
+                with open(TRAINING_LOG_PATH, "r", encoding="utf-8") as f:
+                    # Read last line (most recent training run)
+                    lines = f.readlines()
+                    if lines:
+                        last_entry = json.loads(lines[-1])
+                        # Extract cross-project results if available
+                        metrics = last_entry.get("metrics", {})
+                        if "cross_project" in metrics:
+                            cross_project_data = metrics["cross_project"]
+            except Exception as e:
+                logger.warning("Failed to read training log: %s", e)
+        
+        # Fallback to hardcoded data if log not available or empty
+        if not cross_project_data:
+            logger.info("Using fallback hardcoded training results")
+            cross_project_data = [
+                {"repo": "requests", "model": "RF", "f1": 0.8333, "pr_auc": 0.7664, "recall10": 0.727, "precision10": 0.800, "defect20": 27.3, "n_test": 23, "n_buggy": 11},
+                {"repo": "flask", "model": "LR", "f1": 0.9167, "pr_auc": 0.9346, "recall10": 0.391, "precision10": 0.900, "defect20": 30.4, "n_test": 42, "n_buggy": 23},
+                {"repo": "fastapi", "model": "LR", "f1": 0.8000, "pr_auc": 0.8991, "recall10": 0.435, "precision10": 1.000, "defect20": 91.3, "n_test": 143, "n_buggy": 23},
+                {"repo": "httpx", "model": "RF", "f1": 0.8000, "pr_auc": 0.7996, "recall10": 1.000, "precision10": 0.600, "defect20": 50.0, "n_test": 15, "n_buggy": 6},
+                {"repo": "celery", "model": "RF", "f1": 0.9000, "pr_auc": 0.9626, "recall10": 0.078, "precision10": 1.000, "defect20": 34.1, "n_test": 224, "n_buggy": 129},
+                {"repo": "sqlalchemy", "model": "RF", "f1": 0.8382, "pr_auc": 0.8786, "recall10": 0.062, "precision10": 1.000, "defect20": 35.6, "n_test": 329, "n_buggy": 160},
+                {"repo": "express", "model": "XGB", "f1": 0.2308, "pr_auc": 0.8349, "recall10": 0.857, "precision10": 0.600, "defect20": 85.7, "n_test": 97, "n_buggy": 7},
+                {"repo": "axios", "model": "RF", "f1": 0.7921, "pr_auc": 0.8852, "recall10": 0.145, "precision10": 0.800, "defect20": 56.4, "n_test": 179, "n_buggy": 55},
+                {"repo": "guava", "model": "LR", "f1": 0.4523, "pr_auc": 0.5956, "recall10": 0.017, "precision10": 1.000, "defect20": 59.6, "n_test": 3223, "n_buggy": 591}
+            ]
         
         # Calculate model averages
         model_stats = {}
@@ -1521,3 +1553,5 @@ if __name__ == "__main__":
         sys.exit(1)
         
     app.run(host="localhost", port=5000, debug=True, use_reloader=False)
+
+

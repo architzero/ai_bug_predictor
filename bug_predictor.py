@@ -1,18 +1,49 @@
 import sys
 import os
 import pandas as pd
+import subprocess
+import uuid
 
-from static_analysis.analyzer import analyze_repository
-from git_mining.git_miner import mine_git_data
-from feature_engineering.feature_builder import build_features, filter_correlated_features
-from feature_engineering.labeler import create_labels
-from model.train_model import load_model_version
-from model.predict import predict
-from explainability.explainer import explain_prediction
-from config import SZZ_CACHE_DIR
+from backend.analysis import analyze_repository
+from backend.git_mining import mine_git_data
+from backend.features import build_features, filter_correlated_features
+from backend.labeling import create_labels
+from backend.train import load_model_version
+from backend.predict import predict
+from backend.explainer import explain_prediction
+from backend.config import SZZ_CACHE_DIR, BASE_DIR
 
 
-def run(repo_path):
+def clone_if_needed(repo_input):
+    """Clone repository if URL is provided, otherwise return the path."""
+    if repo_input.startswith("http://") or repo_input.startswith("https://") or repo_input.startswith("git@"):
+        # Extract repo name from URL
+        repo_name = repo_input.rstrip('/').split('/')[-1].replace('.git', '')
+        temp_dir = os.path.join(BASE_DIR, "dataset", f"temp_{repo_name}_{uuid.uuid4().hex[:6]}")
+        
+        print(f"Cloning {repo_input}...")
+        try:
+            result = subprocess.run(
+                ["git", "clone", "--depth", "500", repo_input, temp_dir],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            print(f"✓ Cloned to {temp_dir}")
+            return temp_dir, True  # Return path and is_temp flag
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ ERROR: Failed to clone repository!")
+            print(f"Git error: {e.stderr}")
+            sys.exit(1)
+    else:
+        # Local path
+        if not os.path.exists(repo_input):
+            print(f"\n❌ ERROR: Directory not found: {repo_input}")
+            sys.exit(1)
+        return repo_input, False  # Return path and is_temp flag
+
+
+def run(repo_input):
     """
     Analyze a single repository using pre-trained model.
     
@@ -21,7 +52,10 @@ def run(repo_path):
     
     To train a new model on multiple repos, use main.py instead.
     """
-    print(f"\nAnalyzing repository: {repo_path}")
+    print(f"\nAnalyzing repository: {repo_input}")
+    
+    # Clone if URL, otherwise use local path
+    repo_path, is_temp = clone_if_needed(repo_input)
     
     # Check if model exists
     try:
@@ -37,18 +71,61 @@ def run(repo_path):
 
     # Analyze repository
     print(f"\n1. Static analysis...")
-    static_results = analyze_repository(repo_path)
+    static_results = analyze_repository(repo_path, verbose=True)  # Enable verbose mode
     print(f"   ✓ Analyzed {len(static_results)} files")
     
+    if len(static_results) == 0:
+        print(f"\n❌ ERROR: No source files found in repository!")
+        print(f"\nPossible reasons:")
+        print(f"  - Repository contains no supported source files (.py, .js, .java, etc.)")
+        print(f"  - Repository path is incorrect")
+        print(f"  - Files are in unsupported languages")
+        print(f"\nSupported languages: Python, JavaScript, TypeScript, Java, Go, Ruby, PHP, C#, C++, Rust")
+        sys.exit(1)
+    
     print(f"\n2. Git history mining...")
+    print(f"   (This may take 1-5 minutes for large repos on first run)")
+    print(f"   (Subsequent runs will be instant due to caching)")
     git_results = mine_git_data(repo_path)
     print(f"   ✓ Mined {len(git_results)} files")
 
     print(f"\n3. Feature engineering...")
     df = build_features(static_results, git_results)
+    
+    if len(df) == 0:
+        print(f"\n❌ ERROR: Failed to build features - no valid files!")
+        sys.exit(1)
+    
+    # Small repo warning
+    if len(df) < 25:
+        print(f"\n⚠  WARNING: Small repository detected ({len(df)} files)")
+        print(f"   Results are directional only. Predictions more reliable for repos with 25+ files.")
+        print(f"   Confidence scores will reflect this limitation.")
+    
+    # Check for cross-language issues
+    languages = df['language'].unique()
+    if len(languages) > 1:
+        print(f"\n⚠  WARNING: Multi-language repository detected")
+        print(f"   Languages found: {', '.join(languages)}")
+        print(f"   Model trained primarily on Python - predictions for other languages may be less reliable")
+        
+        python_files = len(df[df['language'] == 'python'])
+        total_files = len(df)
+        
+        if python_files > 0 and python_files < total_files:
+            print(f"\n   Repository mix: {python_files} Python, {total_files - python_files} other languages")
+            print(f"   Analyzing all files, but Python predictions will be most accurate")
+    elif 'python' not in languages:
+        print(f"\n⚠  WARNING: Non-Python repository detected")
+        print(f"   Language: {languages[0] if len(languages) > 0 else 'unknown'}")
+        print(f"   Model trained on Python - predictions may have lower accuracy")
+        print(f"   Confidence scores will reflect this uncertainty")
+    
     df = create_labels(df, repo_path, cache_dir=SZZ_CACHE_DIR)
     df["repo"] = repo_path
-    df = filter_correlated_features(df)
+    # NOTE: Do NOT call filter_correlated_features() here!
+    # The model was trained with a fixed feature set.
+    # Correlation filtering at inference time causes feature mismatch.
     print(f"   ✓ Built features for {len(df)} files")
 
     print(f"\n4. Risk prediction...")
@@ -83,27 +160,65 @@ def run(repo_path):
     print(f"\n{'='*70}")
     print(f"  TOP 15 RISK FILES")
     print(f"{'='*70}")
-    print(f"  {'Risk':<6} {'LOC':<6} {'Complexity':<12} {'File':<40}")
+    print(f"\n  ⚠️  IMPORTANT: Risk percentages are relative rankings within this repository.")
+    print(f"      Focus on TIER (CRI/HIG/MOD/LOW) for prioritization, not absolute %.")
+    print(f"      Tiers are based on percentile ranking: CRI=top 10%, HIG=10-25%, etc.\n")
+    print(f"  {'Rank':<6} {'Risk':<12} {'Tier':<10} {'LOC':<6} {'File':<30}")
     print(f"  {'-'*70}")
     
-    for _, row in df_sorted.head(15).iterrows():
+    for rank, (_, row) in enumerate(df_sorted.head(15).iterrows(), 1):
         risk_pct = f"{row['risk']:.1%}"
+        tier = row.get('risk_tier', 'UNKNOWN')
         loc = int(row.get('loc', 0))
-        complexity = f"{row.get('avg_complexity', 0):.1f}"
         filename = os.path.basename(str(row['file']))
         
         # Truncate long filenames
-        if len(filename) > 40:
-            filename = filename[:37] + "..."
+        if len(filename) > 30:
+            filename = filename[:27] + "..."
         
-        print(f"  {risk_pct:<6} {loc:<6} {complexity:<12} {filename:<40}")
+        # Color-code tiers (using text labels since we can't use colors in CLI)
+        tier_display = f"{tier:<10}"
+        
+        print(f"  #{rank:<5} {risk_pct:<12} {tier_display} {loc:<6} {filename:<30}")
     
     print(f"\n{'='*70}")
     print(f"\n✓ Analysis complete!")
-    print(f"\nSHAP plots saved to: explainability/plots/")
+    
+    plots_dir = os.path.abspath('ml/plots')
+    print(f"\nSHAP plots saved to: {plots_dir}")
     print(f"  - global_bar.png: Feature importance")
     print(f"  - global_beeswarm.png: Feature distribution")
     print(f"  - local_waterfall_*.png: Per-file explanations")
+    
+    # Auto-open plots folder
+    try:
+        if os.name == 'nt':
+            os.startfile(plots_dir)
+            print(f"\n✓ Opened plots folder in Explorer")
+        else:
+            print(f"\nTo view plots, open: {plots_dir}")
+    except Exception:
+        print(f"\nTo view plots manually, open: {plots_dir}")
+    
+    # Cleanup temp directory if cloned
+    if is_temp:
+        import shutil
+        import time
+        try:
+            # On Windows, git files can be locked. Try multiple times with delay.
+            for attempt in range(3):
+                try:
+                    shutil.rmtree(repo_path)
+                    print(f"\n✓ Cleaned up temporary clone")
+                    break
+                except PermissionError:
+                    if attempt < 2:
+                        time.sleep(0.5)
+                    else:
+                        print(f"\n⚠ Could not clean up temp directory (files locked by git)")
+                        print(f"  You can manually delete: {repo_path}")
+        except Exception as e:
+            print(f"\n⚠ Could not clean up temp directory: {e}")
 
 
 if __name__ == "__main__":

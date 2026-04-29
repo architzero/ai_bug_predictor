@@ -1,77 +1,48 @@
-# ── Python ─────────────────────────────────────────────────────────────────────
+# ML artifacts
+ml/models/*.pkl
+ml/plots/*.png
+ml/cache/
+ml/training_log.jsonl
+
+# Training datasets
+dataset/*/
+
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 *.so
-*.egg
 *.egg-info/
-dist/
-build/
-.eggs/
-
-# ── Virtual environments ───────────────────────────────────────────────────────
 venv/
 .venv/
-env/
-.env/
 
-# ── Environment variables (SECURITY: Never commit credentials) ────────────────
+# Environment
 .env
-
-# ── Dataset repos (too large for git — clone separately) ──────────────────────
-dataset/
-
-# ── Trained model binaries ────────────────────────────────────────────────────
-model/*.pkl
-model/*.joblib
-
-# ── Training log (machine-generated, noisy diff) ──────────────────────────────
-model/training_log.jsonl
-
-# ── Cache (resumable mining state — machine-specific, never shared) ────────────
-.cache/
-
-# ── Database (runtime state, not source) ──────────────────────────────────────
-*.db
-*.sqlite
-*.sqlite3
-
-# ── Generated SHAP plots (reproducible from code) ─────────────────────────────
-explainability/plots/
-
-# ── Jupyter ────────────────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-*.ipynb
-
-# ── Coverage & test artifacts ─────────────────────────────────────────────────
-.coverage
-htmlcov/
-.pytest_cache/
-coverage.xml
-
-# ── IDE / editor ──────────────────────────────────────────────────────────────
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 
-# ── Internal dev / diagnostic scripts (not part of deployable codebase) ───────
-diagnose_bleed.py
-feature_verification.py
-setup_security.py
+# Database
+*.db
 
-# ── Internal project docs (not for public repo) ───────────────────────────────
-prd.md
-CLEANUP_SUMMARY.md
+# IDE
+.vscode/
+.idea/
 
-# ── Embedded test repo (not part of project) ──────────────────────────────────
-test_repo/
-
-# ── Old requirements file (replaced by requirements.txt) ──────────────────────
-req.txt
+# Old structure (to be removed)
+data/
+backend/core/
+backend/api/
+backend/services/
+backend/utils/
+docs/
+static/
+templates/
+explainability/
+feature_engineering/
+git_mining/
+model/
+static_analysis/
+bug_type_classification/
+frontend/components/
+frontend/pages/
+scripts/
+tests/
+-p/

@@ -1,0 +1,385 @@
+from backend.config import RISK_THRESHOLD
+import pandas as pd
+import numpy as np
+from backend.szz import is_test_file, is_generated_file
+from backend.train import _calculate_effort_aware_metrics
+from backend.feature_constants import ALL_EXCLUDE_COLS
+
+
+def _assign_risk_tiers_percentile(df):
+    """
+    Assign risk tiers based on within-repository percentile ranking.
+    
+    This is robust to base rate shifts and ensures every scan produces
+    actionable results regardless of absolute probability values.
+    
+    Tiers:
+    - CRITICAL: Top 10% of files by risk score (within each repo)
+    - HIGH: 10-25% (next 15%)
+    - MODERATE: 25-50% (next 25%)
+    - LOW: Bottom 50%
+    
+    CRITICAL: Tiers are assigned PER REPOSITORY, not globally.
+    """
+    if 'risk' not in df.columns or len(df) == 0:
+        df['risk_tier'] = 'UNKNOWN'
+        return df
+    
+    # Check if we have repo column for per-repo ranking
+    if 'repo' in df.columns:
+        # Assign tiers per repository
+        def assign_tier_for_repo(repo_df):
+            repo_df = repo_df.copy()
+            risk_scores = repo_df["risk"].values
+            n = len(risk_scores)
+            
+            # Get unique risk values and sort descending
+            unique_risks = np.unique(risk_scores)[::-1]
+            
+            # Initialize all as LOW
+            tiers = np.array(["LOW"] * n)
+            
+            # Assign tiers based on percentile, handling ties
+            current_rank = 0
+            for unique_risk in unique_risks:
+                # Find all files with this risk score
+                mask = risk_scores == unique_risk
+                count = mask.sum()
+                
+                # Calculate percentile for this group (use minimum rank)
+                percentile = current_rank / n
+                
+                # Assign tier to all files in this group
+                if percentile < 0.10:
+                    tiers[mask] = "CRITICAL"
+                elif percentile < 0.25:
+                    tiers[mask] = "HIGH"
+                elif percentile < 0.50:
+                    tiers[mask] = "MODERATE"
+                # else: LOW (already set)
+                
+                # Move to next rank group
+                current_rank += count
+            
+            repo_df["risk_tier"] = tiers
+            return repo_df
+        
+        # Apply per-repo tier assignment
+        df = df.groupby('repo', group_keys=False).apply(assign_tier_for_repo)
+    else:
+        # Fallback: global ranking if no repo column
+        risk_scores = df["risk"].values
+        n = len(risk_scores)
+        
+        # Sort indices by risk (descending)
+        sorted_indices = np.argsort(risk_scores)[::-1]
+        
+        # Initialize all as LOW
+        tiers = np.array(["LOW"] * n)
+        
+        # Assign tiers based on percentile
+        for rank, idx in enumerate(sorted_indices):
+            percentile = rank / n
+            
+            if percentile < 0.10:
+                tiers[idx] = "CRITICAL"
+            elif percentile < 0.25:
+                tiers[idx] = "HIGH"
+            elif percentile < 0.50:
+                tiers[idx] = "MODERATE"
+            # else: LOW (already set)
+        
+        df["risk_tier"] = tiers
+    
+    return df
+
+
+def _detect_out_of_distribution(df, training_stats=None):
+    """
+    Detect out-of-distribution inputs that may lead to unreliable predictions.
+
+    training_stats: optional dict of {col: {"mean": .., "std": .., "p99": ..}}
+    saved from training time.  When absent we fall back to intra-scan stats
+    which can only detect internal extremes, not distribution shift.
+    """
+    warnings = []
+    confidence_score = 1.0
+
+    # Check for supported languages
+    if "language" in df.columns:
+        supported_languages = {"python", "javascript", "typescript", "java", "go", "ruby", "php", "csharp", "cpp", "c"}
+        unsupported = df[~df["language"].isin(supported_languages)]
+        if not unsupported.empty:
+            warnings.append("Unsupported programming languages detected")
+            confidence_score *= 0.7
+
+    # Check for extreme feature values vs training distribution
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        if col not in df.columns:
+            continue
+        if training_stats and col in training_stats:
+            # Compare against saved training distribution (Fix #22)
+            ref_p99  = training_stats[col].get("p99", None)
+            ref_mean = training_stats[col].get("mean", None)
+            ref_std  = training_stats[col].get("std", 1.0)
+            if ref_p99 is not None and (df[col] > ref_p99 * 3).sum() > 0:
+                warnings.append(f"Extreme values detected in {col}")
+                confidence_score *= 0.8
+            elif ref_mean is not None and ref_std > 0:
+                z_scores = ((df[col] - ref_mean) / ref_std).abs()
+                if (z_scores > 5).sum() > 0:
+                    warnings.append(f"Values >5σ from training mean in {col}")
+                    confidence_score *= 0.85
+        # No training_stats available — skip extreme check to avoid false positives
+
+    # Check for sparse git history
+    if "commits" in df.columns:
+        sparse_commits = (df["commits"] < 5).sum()
+        if sparse_commits > len(df) * 0.5:
+            warnings.append("Sparse git history detected")
+            confidence_score *= 0.6
+
+    # Fix #11: derive is_reliable from the actual confidence_score
+    is_reliable = confidence_score >= 0.6
+
+    return {
+        "is_reliable": is_reliable,
+        "confidence_score": confidence_score,
+        "warnings": warnings
+    }
+
+
+def _calculate_prediction_entropy(proba):
+    """
+    Calculate entropy of probability predictions as uncertainty measure.
+    Higher entropy = more uncertainty.
+    """
+    # Calculate entropy for each prediction
+    epsilon = 1e-10  # Avoid log(0)
+    entropy = -proba * np.log(proba + epsilon) - (1 - proba) * np.log(1 - proba + epsilon)
+    
+    # Normalize entropy to [0, 1] range
+    max_entropy = 0.693  # Maximum entropy for binary classification
+    normalized_entropy = entropy / max_entropy
+    
+    return normalized_entropy
+
+
+def _assess_prediction_confidence(df, proba, training_stats=None):
+    """
+    Comprehensive confidence assessment with tiered penalty system.
+    
+    Research-grade approach: Penalties are additive for independent issues,
+    multiplicative only for dependent/compounding issues.
+    """
+    warnings = []
+    confidence_score = 1.0
+    
+    # Categorize warnings by severity
+    critical_penalties = []  # 50% penalty each
+    moderate_penalties = []  # 15% penalty each
+    minor_penalties = []     # 5% penalty each
+    
+    # Check for unsupported languages (CRITICAL)
+    if "language" in df.columns:
+        supported_languages = {"python", "javascript", "typescript", "java", "go", "ruby", "php", "csharp", "cpp", "c"}
+        unsupported = df[~df["language"].isin(supported_languages)]
+        if not unsupported.empty:
+            warnings.append("Unsupported programming languages detected")
+            critical_penalties.append(0.5)
+    
+    # Check for extreme feature values vs training distribution (MODERATE)
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    extreme_count = 0
+    
+    for col in numeric_cols:
+        if col not in df.columns:
+            continue
+        if training_stats and col in training_stats:
+            # Use robust statistics (median + IQR) instead of mean + std
+            median = training_stats[col].get("median", None)
+            p25 = training_stats[col].get("p01", None)  # Using p01 as proxy for p25
+            p75 = training_stats[col].get("p99", None)  # Using p99 as proxy for p75
+            
+            if median is not None and p75 is not None and p25 is not None:
+                iqr = p75 - p25
+                outlier_threshold = median + 3 * iqr
+                
+                # Only warn if MANY files are outliers (not just 1-2)
+                outlier_count = (df[col] > outlier_threshold).sum()
+                if outlier_count > len(df) * 0.3:  # 30% threshold
+                    warnings.append(f"Extreme values detected in {col}")
+                    extreme_count += 1
+    
+    # Apply moderate penalty only if multiple extreme value warnings
+    if extreme_count >= 3:
+        moderate_penalties.append(0.15)
+    elif extreme_count >= 1:
+        minor_penalties.append(0.05)
+    
+    # Check for sparse git history (MODERATE)
+    if "commits" in df.columns:
+        sparse_commits = (df["commits"] < 5).sum()
+        if sparse_commits > len(df) * 0.5:
+            warnings.append("Sparse git history detected")
+            moderate_penalties.append(0.15)
+    
+    # Check for small repository (MINOR)
+    if len(df) < 25:
+        warnings.append(f"Small repository ({len(df)} files) - predictions less reliable")
+        minor_penalties.append(0.05)
+    
+    # Apply tiered penalties
+    for penalty in critical_penalties:
+        confidence_score *= (1 - penalty)
+    for penalty in moderate_penalties:
+        confidence_score *= (1 - penalty)
+    for penalty in minor_penalties:
+        confidence_score *= (1 - penalty)
+    
+    # Prediction entropy (additive penalty)
+    entropy = _calculate_prediction_entropy(proba).mean()
+    entropy_penalty = entropy * 0.15  # Reduced from 0.3
+    confidence_score = max(confidence_score - entropy_penalty, 0.1)
+    
+    # Determine confidence level
+    if confidence_score > 0.75:
+        confidence_level = "HIGH"
+        message = "Predictions are reliable"
+    elif confidence_score > 0.55:
+        confidence_level = "MEDIUM"
+        message = "Predictions are moderately reliable"
+    else:
+        confidence_level = "LOW"
+        message = "Predictions may be unreliable"
+    
+    # Fix #11: derive is_reliable from the actual confidence_score
+    is_reliable = confidence_score >= 0.55
+    
+    return {
+        "confidence_score": confidence_score,
+        "confidence_level": confidence_level,
+        "message": message,
+        "warnings": warnings,
+        "entropy": entropy,
+        "out_of_distribution": not is_reliable
+    }
+
+
+def predict(model_data, df, return_confidence=False):
+    """
+    Attach 'risk' probability to each file.
+    Uses RISK_THRESHOLD from config to determine binary 'risky' flag.
+    Expects model_data to be a dict: {"model": calibrated_model, "features": feature_list}
+    
+    NEW: Also assigns percentile-based risk tiers for robust ranking.
+    """
+    if isinstance(model_data, dict) and "features" in model_data:
+        model    = model_data["model"]
+        features = model_data["features"]
+        # training_stats saved by _save_model_with_metadata (Fix #22)
+        training_stats = model_data.get("training_stats", None)
+    else:
+        # Fallback for old/saved formats
+        model    = model_data
+        features = getattr(model, "feature_names_in_", None)
+        training_stats = None
+
+    mask = df['file'].apply(
+        lambda f: not is_test_file(str(f)) and not is_generated_file(str(f))
+    )
+    df_source = df[mask].copy()
+    df_test   = df[~mask].copy()
+    
+    if len(df_source) == 0:
+        return df
+
+    X = df_source.drop(columns=ALL_EXCLUDE_COLS, errors="ignore")
+
+    missing_features = []
+    if features is not None:
+        missing = [c for c in features if c not in X.columns]
+        if missing:
+            # CRITICAL: Log missing features and track for UI warning
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "Missing %d feature(s) during prediction (filled with training median): %s. "
+                "This may indicate distribution shift or model/data version mismatch.",
+                len(missing), missing[:5]  # Show first 5 for brevity
+            )
+            missing_features = missing
+            
+        # Fill missing features with training median (better than zero)
+        for c in missing:
+            if training_stats and c in training_stats:
+                # Use training median if available
+                fill_value = training_stats[c].get("median", 0)
+            else:
+                # Fallback to zero if no training stats
+                fill_value = 0
+            X[c] = fill_value
+        X = X[features]
+
+    probs = model.predict_proba(X)
+    risk  = probs[:, 1] if probs.shape[1] > 1 else probs[:, 0]
+
+    df_source["risk"]  = risk
+    df_source["risky"] = (risk >= RISK_THRESHOLD).astype(int)
+    
+    # NEW: Assign percentile-based risk tiers
+    df_source = _assign_risk_tiers_percentile(df_source)
+
+    # Assess prediction confidence
+    confidence_result = _assess_prediction_confidence(df_source, risk, training_stats=training_stats)
+    
+    # Add missing features warning to confidence result
+    if missing_features:
+        # Categorize missing features by importance
+        critical_git_features = ["commits", "bug_fixes", "lines_added", "lines_deleted", "author_count"]
+        critical_missing = [f for f in missing_features if f in critical_git_features]
+        
+        if critical_missing:
+            confidence_result["warnings"].insert(0,
+                f"Limited git history detected - {len(critical_missing)} critical features missing. "
+                f"Predictions may be less accurate. Missing: {', '.join(critical_missing[:3])}..."
+            )
+            # Reduce confidence significantly for missing critical features
+            confidence_result["confidence_score"] *= max(0.4, 1.0 - len(critical_missing) * 0.15)
+        else:
+            confidence_result["warnings"].append(
+                f"Missing {len(missing_features)} features (zero-filled): {', '.join(missing_features[:3])}..."
+            )
+            # Reduce confidence moderately for missing non-critical features
+            confidence_result["confidence_score"] *= max(0.6, 1.0 - len(missing_features) * 0.05)
+        
+        # Update confidence level based on new score
+        if confidence_result["confidence_score"] > 0.8:
+            confidence_result["confidence_level"] = "HIGH"
+        elif confidence_result["confidence_score"] > 0.6:
+            confidence_result["confidence_level"] = "MEDIUM"
+        else:
+            confidence_result["confidence_level"] = "LOW"
+    
+    # Add confidence information to dataframe
+    df_source["confidence_score"] = confidence_result["confidence_score"]
+    df_source["confidence_level"] = confidence_result["confidence_level"]
+
+    # Calculate effort-aware metrics
+    df_source = _calculate_effort_aware_metrics(df_source)
+
+    # test/generated files get 0 risk
+    if not df_test.empty:
+        df_test["risk"]  = 0.0
+        df_test["risky"] = 0
+        df_test["risk_tier"] = "LOW"
+        # Set default effort metrics for test files
+        df_test["risk_per_loc"] = 0.0
+        df_test["effort_priority"] = 0.0
+        df_test["effort_category"] = "LOW_PRIORITY"
+
+    final_df = pd.concat([df_source, df_test]).sort_index()
+    if return_confidence:
+        return final_df, confidence_result
+    return final_df
