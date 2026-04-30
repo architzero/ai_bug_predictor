@@ -18,6 +18,7 @@ Flask-Caching==2.1.0
 fonttools==4.62.1
 gitdb==4.0.12
 GitPython==3.1.46
+gunicorn==23.0.0
 idna==3.11
 imbalanced-learn==0.14.1
 iniconfig==2.3.0

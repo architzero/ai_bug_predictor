@@ -167,7 +167,21 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
         if cached is not None:
             return cached
 
-    now       = datetime.now(timezone.utc)
+    # Anchor 'now' to the latest commit in the repo to prevent temporal leakage
+    # when analyzing historical repositories.
+    try:
+        import subprocess
+        from datetime import datetime, timezone
+        r = subprocess.run(
+            ["git", "log", "-1", "--format=%cI"],
+            cwd=repo_path, capture_output=True, text=True, check=True
+        )
+        now = datetime.fromisoformat(r.stdout.strip())
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+    except Exception as e:
+        print(f"  Warning: Could not determine HEAD commit date ({e}), falling back to wall-clock time.")
+        now = datetime.now(timezone.utc)
     cutoff_2w = 14
     cutoff_1m = 30
     cutoff_3m = 90

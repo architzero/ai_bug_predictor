@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-12">
+    <!-- Header -->
+    <div class="text-center">
+        <h1 class="text-3xl font-extrabold text-gray-900 tracking-tight sm:text-4xl">
+            About CodeSentinel
+        </h1>
+        <p class="mt-4 text-xl text-gray-500">
+            A machine learning approach to defect prediction and static analysis.
+        </p>
+    </div>
+
+    <!-- How it works -->
+    <div class="prose prose-indigo mx-auto text-gray-500">
+        <h2>How It Works</h2>
+        <p>
+            CodeSentinel analyzes your repository by combining traditional static analysis (complexity, coupling, lines of code) 
+            with historical git mining (commit frequency, author experience, churn). This data is fed into an XGBoost/Random Forest 
+            classifier trained on thousands of known bugs across popular open-source repositories.
+        </p>
+        <p>
+            The resulting model predicts the probability (Risk Score) that a file contains an undiscovered defect, allowing engineering 
+            teams to prioritize code reviews and testing efforts.
+        </p>
+    </div>
+
+    <!-- Model Evaluation Data -->
+    <div x-data="aboutDashboard()" class="space-y-8">
+        
+        <div x-show="isLoading" class="text-center py-12">
+            <svg class="animate-spin mx-auto h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Loading model metrics...</p>
+        </div>
+
+        <div x-show="error" class="bg-red-50 p-4 rounded-md" style="display: none;">
+            <p class="text-sm text-red-700" x-text="error"></p>
+        </div>
+
+        <div x-show="!isLoading && !error" style="display: none;" class="space-y-8">
+            
+            <!-- Summary Stats -->
+            <div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Training Dataset</h3>
+                <dl class="grid grid-cols-1 gap-5 sm:grid-cols-3">
+                    <div class="px-4 py-5 bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden sm:p-6">
+                        <dt class="text-sm font-medium text-gray-500 truncate">Total Projects</dt>
+                        <dd class="mt-1 text-3xl font-semibold text-gray-900" x-text="data?.summary?.total_projects || 0"></dd>
+                    </div>
+                    <div class="px-4 py-5 bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden sm:p-6">
+                        <dt class="text-sm font-medium text-gray-500 truncate">Analyzed Files</dt>
+                        <dd class="mt-1 text-3xl font-semibold text-gray-900" x-text="data?.summary?.total_files || 0"></dd>
+                    </div>
+                    <div class="px-4 py-5 bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden sm:p-6">
+                        <dt class="text-sm font-medium text-gray-500 truncate">Known Bugs Found</dt>
+                        <dd class="mt-1 text-3xl font-semibold text-gray-900" x-text="data?.summary?.total_buggy || 0"></dd>
+                    </div>
+                </dl>
+            </div>
+
+            <!-- Cross Project Validation -->
+            <div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Cross-Project Validation</h3>
+                <div class="flex flex-col">
+                    <div class="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
+                        <div class="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
+                            <div class="shadow-sm overflow-hidden border-b border-gray-200 sm:rounded-lg">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Repository</th>
+                                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Model</th>
+                                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">F1 Score</th>
+                                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Recall@10%</th>
+                                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Defect Density (Top 20%)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white divide-y divide-gray-200">
+                                        <template x-for="item in (data?.cross_project || [])" :key="item.repo">
+                                            <tr class="hover:bg-gray-50 transition-colors">
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="item.repo"></td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800" x-text="item.model"></span>
+                                                </td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="item.f1.toFixed(3)"></td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="item.recall10.toFixed(3)"></td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold" 
+                                                    :class="item.defect20 > 50 ? 'text-indigo-600' : 'text-gray-900'"
+                                                    x-text="`${item.defect20}%`"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('aboutDashboard', () => ({
+            data: null,
+            isLoading: true,
+            error: null,
+            
+            async init() {
+                try {
+                    const response = await fetch('/api/model_evaluation');
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch model metrics');
+                    }
+                    this.data = await response.json();
+                } catch (err) {
+                    this.error = err.message;
+                } finally {
+                    this.isLoading = false;
+                }
+            }
+        }));
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div x-data="resultsDashboard()" class="relative">
+
+    <!-- Top Section: Overview Metrics -->
+    <div class="mb-8">
+        <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate mb-6">Scan Results</h2>
+        
+        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            <!-- Total Files -->
+            <div class="bg-white overflow-hidden shadow-sm rounded-lg border border-gray-200">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">Total Files Analyzed</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-gray-900" x-text="overview ? overview.metrics.files_analyzed : '...'">0</dd>
+                </div>
+            </div>
+            
+            <!-- High Risk Count -->
+            <div class="bg-white overflow-hidden shadow-sm rounded-lg border border-gray-200">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">High Risk Files</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-red-600" x-text="highRiskCount">0</dd>
+                </div>
+            </div>
+            
+            <!-- Average Risk -->
+            <div class="bg-white overflow-hidden shadow-sm rounded-lg border border-gray-200">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">Average Risk Score</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-gray-900" x-text="overview ? `${(overview.metrics.avg_risk * 100).toFixed(1)}%` : '...'">0%</dd>
+                </div>
+            </div>
+            
+            <!-- Defect at 20 -->
+            <div class="bg-white overflow-hidden shadow-sm rounded-lg border border-gray-200">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">Defect Capture Rate (Top 20%)</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-indigo-600" x-text="overview ? `${overview.metrics.defect_at_20}%` : '...'">0%</dd>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Middle Section: Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        <!-- Left Column: File List -->
+        <div class="lg:col-span-1 flex flex-col bg-white border border-gray-200 rounded-lg shadow-sm h-[600px]">
+            <div class="p-4 border-b border-gray-200">
+                <div class="relative">
+                    <input type="text" x-model="searchQuery" class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 sm:text-sm" placeholder="Filter files...">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <svg class="h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-2">
+                <ul class="space-y-1">
+                    <template x-for="file in filteredFiles" :key="file.id">
+                        <li>
+                            <button @click="selectFile(file.id)" 
+                                    class="w-full text-left px-3 py-3 rounded-md hover:bg-gray-50 focus:outline-none focus:bg-gray-50 transition-colors flex justify-between items-center group">
+                                <span class="text-sm font-medium text-gray-900 truncate pr-2" x-text="file.filename" :title="file.filename"></span>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium shrink-0"
+                                      :class="getRiskBadgeClass(file.risk)"
+                                      x-text="`${(file.risk * 100).toFixed(0)}%`">
+                                </span>
+                            </button>
+                        </li>
+                    </template>
+                    <li x-show="filteredFiles.length === 0" class="text-center py-4 text-sm text-gray-500">
+                        No files found.
+                    </li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- Right Column: Charts -->
+        <div class="lg:col-span-2 space-y-6">
+            <!-- Risk Histogram -->
+            <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Risk Distribution</h3>
+                <div class="h-64">
+                    <canvas id="riskHistogram"></canvas>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Bug Type Chart (Placeholder since we don't have this API anymore) -->
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Confusion Matrix</h3>
+                    <div class="h-48 flex justify-center items-center">
+                        <canvas id="confusionMatrixChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Feature Importance -->
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Global Feature Drivers</h3>
+                    <div class="h-48">
+                        <canvas id="featureImportanceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide-in Panel for File Details -->
+    <div x-show="isPanelOpen" 
+         class="fixed inset-0 overflow-hidden z-50" 
+         aria-labelledby="slide-over-title" 
+         role="dialog" 
+         aria-modal="true"
+         style="display: none;">
+        
+        <div class="absolute inset-0 overflow-hidden">
+            <!-- Background overlay -->
+            <div x-show="isPanelOpen" 
+                 x-transition:enter="ease-in-out duration-500" 
+                 x-transition:enter-start="opacity-0" 
+                 x-transition:enter-end="opacity-100" 
+                 x-transition:leave="ease-in-out duration-500" 
+                 x-transition:leave-start="opacity-100" 
+                 x-transition:leave-end="opacity-0" 
+                 class="absolute inset-0 bg-gray-500 bg-opacity-75 transition-opacity" 
+                 @click="isPanelOpen = false"
+                 aria-hidden="true"></div>
+
+            <div class="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10">
+                
+                <!-- Slide-over panel -->
+                <div x-show="isPanelOpen" 
+                     x-transition:enter="transform transition ease-in-out duration-500 sm:duration-700" 
+                     x-transition:enter-start="translate-x-full" 
+                     x-transition:enter-end="translate-x-0" 
+                     x-transition:leave="transform transition ease-in-out duration-500 sm:duration-700" 
+                     x-transition:leave-start="translate-x-0" 
+                     x-transition:leave-end="translate-x-full" 
+                     class="pointer-events-auto w-screen max-w-md">
+                    
+                    <div class="flex h-full flex-col overflow-y-scroll bg-white shadow-xl">
+                        
+                        <div class="px-4 py-6 sm:px-6 border-b border-gray-200 bg-gray-50">
+                            <div class="flex items-start justify-between">
+                                <h2 class="text-lg font-medium text-gray-900" id="slide-over-title" x-text="selectedFileDetails?.filepath || 'Loading...'"></h2>
+                                <div class="ml-3 flex h-7 items-center">
+                                    <button type="button" @click="isPanelOpen = false" class="rounded-md bg-white text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                                        <span class="sr-only">Close panel</span>
+                                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="relative flex-1 px-4 py-6 sm:px-6">
+                            <!-- Loading state -->
+                            <div x-show="!selectedFileDetails" class="flex justify-center py-10">
+                                <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            </div>
+
+                            <!-- Details content -->
+                            <div x-show="selectedFileDetails" style="display: none;" class="space-y-8">
+                                
+                                <!-- Risk Score -->
+                                <div>
+                                    <h3 class="text-sm font-medium text-gray-500 mb-2">Overall Risk</h3>
+                                    <div class="flex items-center">
+                                        <span class="text-3xl font-bold" 
+                                              :class="getTextColor(selectedFileDetails?.risk)"
+                                              x-text="`${((selectedFileDetails?.risk || 0) * 100).toFixed(1)}%`">
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- SHAP Visualizations -->
+                                <div>
+                                    <h3 class="text-sm font-medium text-gray-500 border-b border-gray-200 pb-2 mb-4">Risk Drivers (SHAP)</h3>
+                                    
+                                    <div class="space-y-6">
+                                        <!-- Positive Drivers (Increases Risk) -->
+                                        <div>
+                                            <h4 class="text-xs font-semibold text-red-600 uppercase tracking-wider mb-3">Increases Risk</h4>
+                                            <div class="space-y-3">
+                                                <template x-for="feat in (selectedFileDetails?.shap?.positive || [])" :key="feat.feature">
+                                                    <div>
+                                                        <div class="flex justify-between text-sm mb-1">
+                                                            <span class="font-medium text-gray-700" x-text="feat.feature"></span>
+                                                            <span class="text-red-600" x-text="`+${feat.value.toFixed(3)}`"></span>
+                                                        </div>
+                                                        <div class="w-full bg-gray-100 rounded-full h-1.5">
+                                                            <div class="bg-red-500 h-1.5 rounded-full" :style="`width: ${Math.min((feat.value / maxShapValue) * 100, 100)}%`"></div>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                                <p x-show="!selectedFileDetails?.shap?.positive?.length" class="text-sm text-gray-400 italic">None</p>
+                                            </div>
+                                        </div>
+
+                                        <!-- Negative Drivers (Decreases Risk) -->
+                                        <div>
+                                            <h4 class="text-xs font-semibold text-green-600 uppercase tracking-wider mb-3">Decreases Risk</h4>
+                                            <div class="space-y-3">
+                                                <template x-for="feat in (selectedFileDetails?.shap?.negative || [])" :key="feat.feature">
+                                                    <div>
+                                                        <div class="flex justify-between text-sm mb-1">
+                                                            <span class="font-medium text-gray-700" x-text="feat.feature"></span>
+                                                            <span class="text-green-600" x-text="`${feat.value.toFixed(3)}`"></span>
+                                                        </div>
+                                                        <div class="w-full bg-gray-100 rounded-full h-1.5 flex justify-end">
+                                                            <div class="bg-green-500 h-1.5 rounded-full" :style="`width: ${Math.min((Math.abs(feat.value) / maxShapValue) * 100, 100)}%`"></div>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                                <p x-show="!selectedFileDetails?.shap?.negative?.length" class="text-sm text-gray-400 italic">None</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Top Functions -->
+                                <div>
+                                    <h3 class="text-sm font-medium text-gray-500 border-b border-gray-200 pb-2 mb-4">Complex Functions</h3>
+                                    <ul class="divide-y divide-gray-200">
+                                        <template x-for="func in (selectedFileDetails?.top_funcs || [])" :key="func.name">
+                                            <li class="py-3 flex justify-between items-center">
+                                                <div class="truncate pr-4">
+                                                    <p class="text-sm font-medium text-gray-900 font-mono truncate" x-text="func.name"></p>
+                                                    <p class="text-xs text-gray-500" x-text="`${func.len} lines`"></p>
+                                                </div>
+                                                <div class="text-right shrink-0">
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800" x-show="func.cx > 10" x-text="`CX: ${func.cx}`"></span>
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800" x-show="func.cx > 5 && func.cx <= 10" x-text="`CX: ${func.cx}`"></span>
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800" x-show="func.cx <= 5" x-text="`CX: ${func.cx}`"></span>
+                                                </div>
+                                            </li>
+                                        </template>
+                                        <li x-show="!selectedFileDetails?.top_funcs?.length" class="py-3 text-sm text-gray-500">
+                                            No complex functions found.
+                                        </li>
+                                    </ul>
+                                </div>
+                                
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

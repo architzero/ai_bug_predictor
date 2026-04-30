@@ -96,5 +96,12 @@ RISK_THRESHOLD = 0.50
 # ── Defect density validation ─────────────────────────────────────────────────
 DEFECT_DENSITY_TOP_K = 0.20
 
+# ── SZZ Algorithm Parameters ───────────────────────────────────────────────────
+SZZ_MIN_CHURN_RATIO = 0.05  # 5% of file must change to be labeled buggy
+SZZ_MAX_FILES_PER_COMMIT = 15  # Skip commits touching >15 files (tangled commits)
+SZZ_MIN_CONFIDENCE = 0.35  # 35% minimum confidence threshold
+SZZ_LABEL_WINDOW_DAYS = 730  # 2 years (only label recent bug fixes)
+
 # ── Explainability ─────────────────────────────────────────────────────────────
 TOP_LOCAL_PLOTS = 5
+SHAP_BACKGROUND_SAMPLES = 100  # k-means samples for SHAP background

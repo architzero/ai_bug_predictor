@@ -17,7 +17,7 @@ from typing import Dict, Set, List, Optional, Tuple
 import pandas as pd
 from pydriller import Repository, Git
 
-from backend.config import CACHE_VERSION, SKIP_DIR_PATTERNS, SKIP_FILE_PATTERNS
+from backend.config import CACHE_VERSION, SKIP_DIR_PATTERNS, SKIP_FILE_PATTERNS, SZZ_MIN_CHURN_RATIO, SZZ_MAX_FILES_PER_COMMIT, SZZ_MIN_CONFIDENCE, SZZ_LABEL_WINDOW_DAYS
 from backend.analysis import SUPPORTED_EXTENSIONS, get_language
 
 # ── Keyword lists ──────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ def get_commit_confidence(message: str) -> float:
     
     return min(max_confidence, 1.0)
 
-def has_substantive_code_changes(file_mod, language: str, min_churn_ratio: float = 0.05) -> bool:
+def has_substantive_code_changes(file_mod, language: str, min_churn_ratio: float = SZZ_MIN_CHURN_RATIO) -> bool:
     """Check if file has substantive code changes using churn ratio.
     
     CHURN-WEIGHTED LABELING: Only label files where a significant portion
@@ -337,7 +337,7 @@ def _save_szz_msg_cache(repo_path, messages, cache_dir):
 
 # ── Core labeling ──────────────────────────────────────────────────────────────
 
-def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_days=730, min_confidence=0.35):
+def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_days=SZZ_LABEL_WINDOW_DAYS, min_confidence=SZZ_MIN_CONFIDENCE):
     """
     SZZ v2.6 with churn-weighted labeling:
     - Balanced bug-fix detection (issue refs, reverts, strong keywords)
@@ -403,8 +403,8 @@ def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_d
             skipped_old_commits += 1
             continue
 
-        # Filter 3: Size cap - skip commits touching more than 15 files
-        if len(commit.modified_files) > 15:
+        # Filter 3: Size cap - skip commits touching more than SZZ_MAX_FILES_PER_COMMIT files
+        if len(commit.modified_files) > SZZ_MAX_FILES_PER_COMMIT:
             skipped_large_commits += 1
             continue
 
@@ -437,9 +437,9 @@ def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_d
             if not fp_norm.endswith(tuple(SUPPORTED_EXTENSIONS.keys())):
                 continue
             
-            # Filter 5: Check for substantive code changes (>5% of file)
+            # Filter 5: Check for substantive code changes (>SZZ_MIN_CHURN_RATIO of file)
             lang = get_language(path)
-            if not has_substantive_code_changes(file, lang, min_churn_ratio=0.05):
+            if not has_substantive_code_changes(file, lang, min_churn_ratio=SZZ_MIN_CHURN_RATIO):
                 skipped_trivial_changes += 1
                 continue
 

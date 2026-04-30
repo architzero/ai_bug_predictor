@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="min-h-[60vh] flex flex-col items-center justify-center max-w-2xl mx-auto w-full" x-data="scanProgress('{{ scan_id }}')">
+    <div class="w-full bg-white p-8 rounded-xl shadow-sm border border-gray-100 text-center">
+        <h2 class="text-2xl font-bold text-gray-900 mb-2">Analyzing Repository</h2>
+        <p class="text-gray-500 mb-8 font-mono text-sm" x-text="statusText">Initializing...</p>
+
+        <!-- Progress Bar -->
+        <div class="relative pt-1 w-full mb-8">
+            <div class="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-100">
+                <div :style="`width: ${progress}%`" 
+                     class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-gray-900 transition-all duration-500 ease-out">
+                </div>
+            </div>
+            <div class="text-right text-sm font-semibold text-gray-700" x-text="`${progress}%`">0%</div>
+        </div>
+
+        <!-- Error State -->
+        <div x-show="error" class="bg-red-50 text-red-700 p-4 rounded-md text-left mb-6" style="display: none;">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-red-800">Scan Failed</h3>
+                    <div class="mt-2 text-sm text-red-700">
+                        <p x-text="error"></p>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4 flex space-x-3">
+                <a href="/" class="text-sm font-medium text-red-800 hover:text-red-700 bg-red-100 px-3 py-2 rounded-md transition-colors">Try Again</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('scanProgress', (scanId) => ({
+            progress: 0,
+            statusText: 'Connecting to server...',
+            error: null,
+            eventSource: null,
+
+            init() {
+                this.startListening();
+            },
+
+            startListening() {
+                this.eventSource = new EventSource(`/api/scan_progress/${scanId}`);
+
+                this.eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.progress = data.progress;
+                        this.statusText = data.status;
+
+                        if (data.error) {
+                            this.error = data.error;
+                            this.eventSource.close();
+                        } else if (data.complete) {
+                            this.progress = 100;
+                            this.statusText = 'Redirecting to results...';
+                            this.eventSource.close();
+                            
+                            // Redirect to results page
+                            setTimeout(() => {
+                                window.location.href = `/results/${scanId}`;
+                            }, 500);
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse progress event:", e);
+                    }
+                };
+
+                this.eventSource.onerror = (error) => {
+                    this.error = "Connection lost to the server.";
+                    this.eventSource.close();
+                };
+            }
+        }));
+    });
+</script>
+{% endblock %}

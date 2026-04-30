@@ -71,11 +71,13 @@ def build_features(static_results, git_results):
         file_path = static["file"]
         g = git_results.get(file_path, {})
 
-        # safe base values — prevent division by zero
+        # PRE-COMPUTE ALL BASE VALUES ONCE (optimization)
         commits    = max(g.get("commits", 0), 1)
         loc        = max(static["loc"], 1)
         functions  = max(static["functions"], 1)
-        churn      = g.get("lines_added", 0) + g.get("lines_deleted", 0)
+        lines_added = g.get("lines_added", 0)
+        lines_deleted = g.get("lines_deleted", 0)
+        churn      = lines_added + lines_deleted
         avg_cx     = static["avg_complexity"]
         commits_3m = g.get("commits_3m", 0)
         avg_commit = churn / commits
@@ -120,15 +122,15 @@ def build_features(static_results, git_results):
             "has_test_file":        int(static.get("has_test_file", False)),
             "complexity_vs_baseline": complexity_vs_baseline,
 
-            # complexity ratios
+            # complexity ratios (use pre-computed values)
             "complexity_density":      avg_cx / loc,
             "complexity_per_function": avg_cx / functions,
-            "loc_per_function":        static["loc"] / functions,
+            "loc_per_function":        loc / functions,
 
-            # git base
+            # git base (use pre-computed values)
             "commits":       commits,
-            "lines_added":   g.get("lines_added",   0),
-            "lines_deleted": g.get("lines_deleted",  0),
+            "lines_added":   lines_added,
+            "lines_deleted": lines_deleted,
             "max_added":     g.get("max_added",      0),
             "bug_fixes":     g.get("bug_fixes",      0),
 
@@ -147,7 +149,7 @@ def build_features(static_results, git_results):
             "low_history_flag":        g.get("low_history_flag",        1),
             "minor_contributor_ratio": g.get("minor_contributor_ratio", 0),
 
-            # stability / volatility
+            # stability / volatility (use pre-computed churn and avg_commit)
             "instability_score": churn / loc,
             "avg_commit_size":   avg_commit,
             "max_commit_ratio":  g.get("max_added", 0) / avg_commit

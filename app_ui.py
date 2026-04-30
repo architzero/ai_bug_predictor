@@ -50,15 +50,6 @@ from backend.train import load_model_version
 from backend.explainer import _compute_shap, _get_features, NON_FEATURE_COLS
 from backend.commit_risk import predict_commit_risk
 from backend.config import REPOS, SZZ_CACHE_DIR, BASE_DIR, MODEL_LATEST_PATH, GIT_FEATURES_TO_NORMALIZE, TRAINING_LOG_PATH
-from backend.database import (
-    DatabaseManager, 
-    save_scan_results, 
-    get_recent_scans, 
-    get_high_risk_files,
-    get_scan_by_id,
-    Scan,
-    FileRisk
-)
 
 
 
@@ -119,9 +110,6 @@ def generate_csrf_token():
         session["csrf_token"] = secrets.token_hex(32)
     return session["csrf_token"]
 
-# Initialize database
-db = DatabaseManager.get_instance()
-logger.info("Database initialized")
 
 # Scan progress tracking.
 # Entries are also tagged with a 'created_at' timestamp so a periodic TTL
@@ -130,6 +118,11 @@ logger.info("Database initialized")
 scan_progress = {}  # {scan_id: {"progress": 0, "status": "...", "complete": False, "created_at": <float>}}
 _scan_progress_lock = threading.Lock()  # Thread-safe access to scan_progress
 _SCAN_PROGRESS_TTL_SECS = 1800  # evict entries older than 30 min
+
+# Scan results storage - persists after scan completes for results page
+scan_results = {}  # {scan_id: {"repo_name": ..., "files": [...], "metrics": {...}, "created_at": <float>}}
+_scan_results_lock = threading.Lock()
+_SCAN_RESULTS_TTL_SECS = 3600  # evict entries older than 60 min
 
 
 def _evict_stale_scan_progress():
@@ -144,6 +137,19 @@ def _evict_stale_scan_progress():
             scan_progress.pop(sid, None)
         if stale:
             logger.info("Evicted %d stale scan_progress entries", len(stale))
+
+def _evict_stale_scan_results():
+    """Remove scan_results entries older than _SCAN_RESULTS_TTL_SECS."""
+    with _scan_results_lock:
+        now = time.time()
+        stale = [
+            sid for sid, info in scan_results.items()
+            if now - info.get("created_at", now) > _SCAN_RESULTS_TTL_SECS
+        ]
+        for sid in stale:
+            scan_results.pop(sid, None)
+        if stale:
+            logger.info("Evicted %d stale scan_results entries", len(stale))
 
 # ── OAuth Configuration ──
 github_client_id = os.environ.get("GITHUB_CLIENT_ID")
@@ -328,25 +334,18 @@ def init_app_state():
 # OAuth and ad-hoc scans even when the trained model is not yet present.
 # Unexpected crashes inside init_app_state are logged at ERROR with a full
 # traceback so they are easy to diagnose without killing the server.
-try:
-    init_app_state()
-except Exception:
-    logger.error(
-        "Backend init raised an unexpected error — "
-        "starting in scan-only mode. Check the log for details.",
-        exc_info=True,
-    )
+
 
 @app.route("/")
 def index():
-    # Provide the auth state to template for conditional rendering
     auth_state = {
         "is_authenticated": "github_token" in session,
         "username": session.get("github_username", ""),
         "avatar": session.get("github_avatar", ""),
         "csrf_token": generate_csrf_token()
     }
-    return render_template("index.html", auth=auth_state)
+    github_oauth_enabled = bool(github_client_id and github_client_secret)
+    return render_template("index.html", auth=auth_state, github_oauth_enabled=github_oauth_enabled, csrf_token=generate_csrf_token())
 
 # ── Authentication Routes ──
 @app.route("/auth/github/login")
@@ -356,8 +355,9 @@ def github_login():
     
     state = secrets.token_urlsafe(16)
     session["oauth_state"] = state
-    redirect_uri = url_for("github_callback", _external=True)
-    return github.authorize_redirect(redirect_uri, state=state)
+    # Let GitHub use the default callback URL configured in the OAuth App settings
+    # This prevents localhost vs 127.0.0.1 mismatch errors
+    return github.authorize_redirect(redirect_uri=None, state=state)
 
 @app.route("/auth/github/callback")
 def github_callback():
@@ -563,15 +563,6 @@ def _generate_health_trend():
 @app.route("/api/files")
 @cache.cached(timeout=300, query_string=True)
 def api_files():
-    try:
-        recent_scan = get_recent_scans(limit=1)
-        if recent_scan:
-            files = get_high_risk_files(scan_id=recent_scan[0]['scan_id'], limit=500)
-            if files:
-                return jsonify(files)
-    except Exception as e:
-        logger.warning("Database query failed, using app_state: %s", e)
-
     df = app_state["df"]
     if df is None:
         return jsonify([])
@@ -592,43 +583,82 @@ def api_files():
 @app.route("/api/file", methods=["GET"])
 def api_file_detail():
     file_id = request.args.get("id", "").strip()
+    scan_id = request.args.get("scan_id", "").strip()
     
     if not file_id or len(file_id) > 500 or ".." in file_id:
         return jsonify({"error": "Invalid file ID"}), 400
     
-    df = app_state["df"]
+    # Try to get data from scan_results if scan_id provided, otherwise fallback to global state
+    df = None
+    repo_path = ""
+    
+    if scan_id:
+        with _scan_results_lock:
+            if scan_id in scan_results:
+                scan_data = scan_results[scan_id]
+                df = pd.DataFrame(scan_data["files"])
+                repo_path = scan_data["repo_path"]
+                logger.info(f"File API: Using scan_results for scan_id={scan_id}, found {len(df)} files")
+            else:
+                logger.warning(f"File API: scan_id={scan_id} not found in scan_results")
+    
+    # Fallback to global app_state if no scan_id or scan not found
+    if df is None:
+        df = app_state["df"]
+        logger.info(f"File API: Falling back to global app_state")
+    
     if df is None or file_id not in df["file"].values:
         return jsonify({"error": "File not found"}), 404
-        
+    
     idx = df.index[df['file'] == file_id].tolist()[0]
     row = df.loc[idx]
+    
+    # Use repo_path from scan or from row
+    if not repo_path:
+        repo_path = row.get("repo", "")
     
     top_funcs = []
     try:
         funcs = get_top_functions(file_id, top_n=5)
         top_funcs = [{"name": f["name"], "cx": f["complexity"], "len": f["length"]} for f in funcs]
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Could not get top functions for {file_id}: {e}")
         pass
-        
+    
+    # For SHAP, we still use global state since computing SHAP per-scan is expensive
+    # In the future, we could store SHAP values per scan
     shap_vals = app_state["global_shap"]
     X_disp = app_state["global_shap_X"]
     
+    shap_data = {"positive": [], "negative": []}
+    
     if shap_vals is not None and len(shap_vals) > idx:
-        sv = shap_vals[idx]
-        if len(sv.shape) > 1 and sv.shape[1] > 1:
-            sv = sv[:, 1]
-            
-        contribs = pd.Series(sv, index=X_disp.columns).sort_values(ascending=False)
-        shap_data = {
-            "positive": [{"feature": k, "value": round(v, 4)} for k, v in contribs[contribs > 0].head(5).to_dict().items()],
-            "negative": [{"feature": k, "value": round(v, 4)} for k, v in contribs[contribs < 0].tail(5).to_dict().items()]
-        }
+        try:
+            sv = shap_vals[idx]
+            if len(sv.shape) > 1 and sv.shape[1] > 1:
+                sv = sv[:, 1]
+                
+            if X_disp is not None and len(X_disp.columns) == len(sv):
+                contribs = pd.Series(sv, index=X_disp.columns).sort_values(ascending=False)
+                shap_data = {
+                    "positive": [{"feature": k, "value": round(float(v), 4)} for k, v in contribs[contribs > 0].head(5).to_dict().items()],
+                    "negative": [{"feature": k, "value": round(float(v), 4)} for k, v in contribs[contribs < 0].tail(5).to_dict().items()]
+                }
+        except Exception as e:
+            logger.warning(f"Could not compute SHAP for file {file_id}: {e}")
     else:
-        shap_data = {"positive": [], "negative": []}
-        
+        logger.debug(f"No SHAP values available for index {idx}")
+    
+    filepath = file_id
+    if repo_path:
+        try:
+            filepath = os.path.relpath(file_id, repo_path).replace("\\", "/")
+        except:
+            filepath = os.path.basename(file_id)
+    
     return jsonify({
-        "filepath": os.path.relpath(file_id, row["repo"]).replace("\\", "/"),
-        "risk": round(row["risk"], 3),
+        "filepath": filepath,
+        "risk": round(float(row["risk"]), 3),
         "top_funcs": top_funcs,
         "shap": shap_data
     })
@@ -708,14 +738,15 @@ def api_scan_repo():
             "created_at": time.time(),   # for TTL eviction (Fix #6)
         }
 
+    github_token = session.get("github_token")
     logger.info("Scan %s started for: %s", scan_id, repo_path)
-    thread = threading.Thread(target=scan_repo_background, args=(scan_id, repo_path))
+    thread = threading.Thread(target=scan_repo_background, args=(scan_id, repo_path, github_token))
     thread.daemon = True
     thread.start()
 
     return jsonify({"success": True, "scan_id": scan_id})
 
-def scan_repo_background(scan_id, repo_path):
+def scan_repo_background(scan_id, repo_path, github_token=None):
     """Background task for repository scanning with progress updates."""
     import subprocess
     _scan_logger = logging.getLogger(f"app_ui.scan.{scan_id[:8]}")
@@ -768,15 +799,15 @@ def scan_repo_background(scan_id, repo_path):
                     is_private = True
                 
                 if is_private:
-                    if "github_token" not in session:
+                    if not github_token:
                         update_progress(0, "Error", complete=True, error="Authentication required for private repositories")
                         return
                     
-                    if not refresh_github_token():
+                    if not validate_github_token(github_token):
                         update_progress(0, "Error", complete=True, error="Token expired - please re-authenticate")
                         return
                     
-                    auth_clone_url = repo_path.replace("https://github.com", f"https://x-access-token:{session['github_token']}@github.com")
+                    auth_clone_url = repo_path.replace("https://github.com", f"https://x-access-token:{github_token}@github.com")
                 
             try:
                 repo_name = repo_path.rstrip('/').split('/')[-1].replace('.git', '')
@@ -792,11 +823,20 @@ def scan_repo_background(scan_id, repo_path):
                 )
                 repo_path = temp_cache_dir
             except subprocess.CalledProcessError as e:
-                err_msg = "Git clone failed. Check repository URL and permissions."
-                if e.returncode == 128:
-                    err_msg = "Repository not found or access denied."
-                update_progress(0, "Error", complete=True, error=err_msg)
-                return
+                if e.stderr and "Clone succeeded, but checkout failed" in e.stderr:
+                    _scan_logger.warning("Git checkout partially failed (likely OS path constraints). Forcing checkout of valid files...")
+                    try:
+                        subprocess.run(["git", "config", "core.protectNTFS", "false"], cwd=temp_cache_dir, check=True)
+                        subprocess.run(["git", "checkout", "-f", "HEAD"], cwd=temp_cache_dir, check=False)
+                    except Exception as checkout_err:
+                        _scan_logger.warning(f"Forced checkout failed: {checkout_err}")
+                    repo_path = temp_cache_dir
+                else:
+                    err_msg = "Git clone failed. Check repository URL and permissions."
+                    if e.returncode == 128:
+                        err_msg = f"Repository not found or access denied. Error: {e.stderr.strip() if e.stderr else ''}"
+                    update_progress(0, "Error", complete=True, error=err_msg)
+                    return
                 
         elif not os.path.exists(repo_path) or not os.path.isdir(repo_path):
             update_progress(0, "Error", complete=True, error=f"Invalid directory path: {repo_path}")
@@ -853,16 +893,9 @@ def scan_repo_background(scan_id, repo_path):
         raw_model = model_data["model"] if isinstance(model_data, dict) and "model" in model_data else model_data
         shap_vals, expected_val, X_disp = _compute_shap(raw_model, X)
         
-        # Save to database
-        update_progress(95, "Saving to database...")
-        scan_record = save_scan_results(
-            df=df_repo,
-            scan_id=scan_id,
-            repo_path=repo_path,
-            confidence_result=confidence_result,
-            scan_duration=time.time() - time.time()  # Will be updated below
-        )
-        print(f"✓ Saved scan {scan_id} to database: {len(df_repo)} files")
+        # Update app state
+        update_progress(95, "Updating state...")
+        print(f"✓ Processed scan {scan_id}: {len(df_repo)} files")
         
         # Update app state (for backward compatibility)
         app_state["df"] = df_repo
@@ -901,6 +934,18 @@ def scan_repo_background(scan_id, repo_path):
             }
         }
         
+        # Store scan results for results page retrieval
+        _evict_stale_scan_results()
+        with _scan_results_lock:
+            scan_results[scan_id] = {
+                "repo_name": os.path.basename(repo_path).replace('.git', ''),
+                "repo_path": repo_path,
+                "files": df_repo.to_dict('records'),
+                "metrics": app_state["metrics"],
+                "created_at": time.time()
+            }
+            logger.info(f"Scan {scan_id}: Results stored with {len(df_repo)} files")
+        
         update_progress(100, "Complete", complete=True)
         
         # Invalidate cache after successful scan
@@ -909,6 +954,128 @@ def scan_repo_background(scan_id, repo_path):
     except Exception as e:
         _scan_logger.error("Scan %s failed: %s", scan_id, e, exc_info=True)
         update_progress(0, "Error", complete=True, error=str(e))
+
+@app.route("/api/scan_results/<scan_id>")
+def api_scan_results(scan_id):
+    """Retrieve scan results by scan_id for the results page."""
+    logger.info(f"API: Request for scan_results/{scan_id}")
+    
+    with _scan_results_lock:
+        available_scans = list(scan_results.keys())
+        logger.info(f"API: Available scans: {len(available_scans)}")
+        
+        if scan_id not in scan_results:
+            logger.warning(f"API: Scan {scan_id} not found. Available: {available_scans[:5]}...")
+            return jsonify({"error": "Scan results not found or expired", "scan_id": scan_id}), 404
+        
+        result = scan_results[scan_id]
+        
+        # Prepare file list with risk info
+        files = []
+        for _, row in pd.DataFrame(result["files"]).iterrows():
+            files.append({
+                "id": str(row.get("file", "")),
+                "filename": os.path.basename(str(row.get("file", ""))),
+                "risk": round(row.get("risk", 0.0), 3),
+                "buggy": int(row.get("buggy", 0)),
+                "complexity": int(row.get("avg_complexity", 0)),
+                "coupling": round(row.get("coupling_risk", 0.0), 2),
+                "temporal": round(row.get("temporal_bug_risk", 0.0), 2),
+            })
+        
+        # Sort by risk descending
+        files.sort(key=lambda x: x["risk"], reverse=True)
+        
+        return jsonify({
+            "scan_id": scan_id,
+            "repo_name": result["repo_name"],
+            "metrics": result["metrics"],
+            "files": files[:500],  # Limit to top 500 files
+            "created_at": result["created_at"]
+        })
+
+
+@app.route("/api/scan_results/<scan_id>/download")
+def download_scan_results(scan_id):
+    """Download scan results as CSV or JSON file."""
+    format_type = request.args.get("format", "json").lower()
+    
+    with _scan_results_lock:
+        if scan_id not in scan_results:
+            return jsonify({"error": "Scan results not found or expired"}), 404
+        
+        result = scan_results[scan_id]
+    
+    if format_type == "csv":
+        # Generate CSV
+        import csv
+        import io
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow([
+            "filename", "risk_score", "risk_percentage", "risk_tier",
+            "lines_of_code", "avg_complexity", "max_complexity",
+            "commits", "unique_authors", "bug_fixes"
+        ])
+        
+        # Write data
+        for file_data in result["files"]:
+            risk = file_data.get("risk", 0)
+            risk_tier = "Critical" if risk >= 0.8 else "High" if risk >= 0.6 else "Moderate" if risk >= 0.4 else "Low"
+            
+            writer.writerow([
+                file_data.get("file", ""),
+                round(risk, 4),
+                f"{risk*100:.1f}%",
+                risk_tier,
+                file_data.get("loc", 0),
+                round(file_data.get("avg_complexity", 0), 2),
+                file_data.get("max_complexity", 0),
+                file_data.get("commits", 0),
+                file_data.get("unique_authors", 0),
+                file_data.get("bug_fixes", 0)
+            ])
+        
+        output.seek(0)
+        
+        from flask import Response
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=scan_results_{result['repo_name']}_{scan_id[:8]}.csv",
+                "Content-Type": "text/csv; charset=utf-8"
+            }
+        )
+    
+    else:  # JSON format (default)
+        # Prepare full export with metadata
+        export_data = {
+            "scan_id": scan_id,
+            "export_timestamp": time.time(),
+            "export_format": "json",
+            "repository": {
+                "name": result["repo_name"],
+                "path": result["repo_path"]
+            },
+            "metrics": result["metrics"],
+            "files": result["files"],
+            "generated_at": result["created_at"]
+        }
+        
+        from flask import Response
+        return Response(
+            json.dumps(export_data, indent=2, default=str),
+            mimetype="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=scan_results_{result['repo_name']}_{scan_id[:8]}.json",
+                "Content-Type": "application/json; charset=utf-8"
+            }
+        )
+
 
 @app.route("/api/scan_progress/<scan_id>")
 def scan_progress_stream(scan_id):
@@ -1344,205 +1511,102 @@ def api_importance():
     return jsonify([{"feature": k, "value": round(float(v), 4)} for k, v in importance.items()])
 
 
-# ── GitHub Webhook — Real-Time PR Risk Assessment ──────────────────────────────
-#
-# Setup:
-#   1. Set GITHUB_WEBHOOK_SECRET in your .env file to any strong random string.
-#   2. In your GitHub repo → Settings → Webhooks → Add webhook:
-#        Payload URL : http://<your-server>/webhook/github
-#        Content type: application/json
-#        Secret      : <same value as GITHUB_WEBHOOK_SECRET>
-#        Events      : Pull requests
-#
-# The endpoint verifies the HMAC-SHA256 signature on every delivery to prevent
-# spoofed payloads, then queues an async risk assessment and posts a comment.
-
-import hmac
-import hashlib
-
-_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-
-
-def _verify_github_signature(payload_bytes: bytes, sig_header: str) -> bool:
-    """Verify X-Hub-Signature-256 header using HMAC-SHA256."""
-    if not _WEBHOOK_SECRET:
-        logger.warning("GITHUB_WEBHOOK_SECRET not set — webhook signature check skipped")
-        return True  # Allow through in dev; fail closed in prod by setting the secret
-    if not sig_header or not sig_header.startswith("sha256="):
-        return False
-    expected = "sha256=" + hmac.new(
-        _WEBHOOK_SECRET.encode("utf-8"),
-        payload_bytes,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, sig_header)
-
-
-def _post_pr_comment(owner: str, repo: str, pr_number: int, body: str, token: str) -> bool:
-    """Post a comment to a GitHub PR via the REST API."""
-    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
-    resp = requests.post(
-        url,
-        headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
-        json={"body": body},
-        timeout=10,
-    )
-    return resp.status_code == 201
-
-
-def _webhook_assess_pr(owner: str, repo: str, pr_number: int,
-                        clone_url: str, changed_files: list[str], token: str):
-    """
-    Background thread: run risk assessment for the PR's changed files and
-    post a structured comment back to the PR.
-    """
-    try:
-        df = app_state.get("df")
-        if df is None or df.empty:
-            logger.warning("Webhook: no dataset loaded — skipping risk assessment for PR #%s", pr_number)
-            return
-
-        # Match changed PR filenames against the loaded dataset
-        matched_paths = []
-        for fname in changed_files:
-            for abs_path in df["file"].values:
-                if fname.lower() in abs_path.lower().replace("\\", "/"):
-                    matched_paths.append(abs_path)
-                    break
-
-        if not matched_paths:
-            comment = (
-                f"## 🤖 CodeSentinel Risk Assessment — PR #{pr_number}\n\n"
-                f"⚠️ None of the {len(changed_files)} changed file(s) matched the analyzed dataset.\n"
-                f"Run `python main.py` to update the analysis, then re-open this PR.\n"
-            )
-            _post_pr_comment(owner, repo, pr_number, comment, token)
-            return
-
-        risk_score, risky_df = predict_commit_risk(df, matched_paths)
-
-        # Build risk level label
-        if risk_score >= 0.80:
-            level_badge = "🔴 CRITICAL"
-        elif risk_score >= 0.60:
-            level_badge = "🟠 HIGH"
-        elif risk_score >= 0.40:
-            level_badge = "🟡 MODERATE"
-        else:
-            level_badge = "🟢 LOW"
-
-        lines = [
-            f"## 🤖 CodeSentinel Risk Assessment — PR #{pr_number}",
-            f"",
-            f"**Commit Risk Score: `{risk_score:.0%}` {level_badge}**",
-            f"",
-            f"| File | Risk | Label |",
-            f"|---|---|---|",
-        ]
-
-        top_files = risky_df.sort_values("risk", ascending=False).head(5)
-        for _, row in top_files.iterrows():
-            fname = os.path.basename(str(row["file"]))
-            r     = row.get("risk", 0.0)
-            lbl   = "🐛 Buggy" if int(row.get("buggy", 0)) == 1 else "✅ Clean"
-            icon  = "🔴" if r >= 0.8 else "🟠" if r >= 0.6 else "🟡" if r >= 0.4 else "🟢"
-            lines.append(f"| `{fname}` | {icon} `{r:.0%}` | {lbl} |")
-
-        lines += [
-            f"",
-            f"*{len(matched_paths)} file(s) matched from {len(changed_files)} changed.*",
-            f"*Powered by [CodeSentinel](https://github.com/architzero/ai_bug_predictor)*",
-        ]
-
-        comment = "\n".join(lines)
-        posted = _post_pr_comment(owner, repo, pr_number, comment, token)
-        if posted:
-            logger.info("Webhook: posted risk comment to %s/%s PR #%s (risk=%.2f)", owner, repo, pr_number, risk_score)
-        else:
-            logger.warning("Webhook: failed to post comment to PR #%s", pr_number)
-
-    except Exception as exc:
-        logger.error("Webhook assessment failed for PR #%s: %s", pr_number, exc, exc_info=True)
-
-
-@app.route("/webhook/github", methods=["POST"])
-def github_webhook():
-    """
-    Receive GitHub webhook events and trigger real-time PR risk assessment.
-    Verifies X-Hub-Signature-256, filters pull_request events, posts a
-    risk comment back to the PR asynchronously.
-    """
-    payload_bytes = request.get_data()
-
-    # ── Signature verification ─────────────────────────────────────────────
-    sig_header = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_github_signature(payload_bytes, sig_header):
-        logger.warning("Webhook: invalid signature rejected from %s", request.remote_addr)
-        return jsonify({"error": "Invalid signature"}), 401
-
-    # ── Event routing ──────────────────────────────────────────────────────
-    event_type = request.headers.get("X-GitHub-Event", "")
-    if event_type not in ("pull_request", "ping"):
-        return jsonify({"status": "ignored", "event": event_type}), 200
-
-    if event_type == "ping":
-        logger.info("Webhook: ping received — webhook configured successfully")
-        return jsonify({"status": "pong"}), 200
-
-    data = request.get_json(silent=True) or {}
-    action = data.get("action", "")
-
-    # Only assess on PR open or new commits pushed
-    if action not in ("opened", "synchronize", "reopened"):
-        return jsonify({"status": "ignored", "action": action}), 200
-
-    pr        = data.get("pull_request", {})
-    pr_number = pr.get("number")
-    repo_data = data.get("repository", {})
-    owner     = repo_data.get("owner", {}).get("login", "")
-    repo_name = repo_data.get("name", "")
-    clone_url = repo_data.get("clone_url", "")
-
-    if not all([pr_number, owner, repo_name]):
-        return jsonify({"error": "Malformed payload"}), 400
-
-    # Resolve GitHub token (prefer session OAuth token, fall back to env PAT)
-    token = (
-        session.get("github_token")
-        or os.environ.get("GITHUB_TOKEN", "")
-    )
-    if not token:
-        logger.warning("Webhook: no GitHub token available — cannot post PR comment")
-        return jsonify({"status": "no_token"}), 200
-
-    # Fetch changed files from GitHub API
-    try:
-        files_resp = requests.get(
-            f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files",
-            headers={"Authorization": f"token {token}"},
-            timeout=10,
-        )
-        changed_files = [f["filename"] for f in files_resp.json()] if files_resp.ok else []
-    except Exception:
-        changed_files = []
-
-    # Launch assessment in background — return 200 immediately to GitHub
-    thread = threading.Thread(
-        target=_webhook_assess_pr,
-        args=(owner, repo_name, pr_number, clone_url, changed_files, token),
-        daemon=True,
-    )
-    thread.start()
-
-    logger.info("Webhook: queued assessment for %s/%s PR #%s (%d files)", owner, repo_name, pr_number, len(changed_files))
-    return jsonify({"status": "queued", "pr": pr_number}), 202
 
 
 
+@app.route("/scan/<scan_id>")
+def scan_page(scan_id):
+    auth_state = {
+        "is_authenticated": "github_token" in session,
+        "username": session.get("github_username", ""),
+        "csrf_token": generate_csrf_token()
+    }
+    return render_template("scan.html", scan_id=scan_id, auth=auth_state, csrf_token=generate_csrf_token())
 
-if __name__ == "__main__":
+@app.route("/results/<scan_id>")
+def results_page(scan_id):
+    auth_state = {
+        "is_authenticated": "github_token" in session,
+        "username": session.get("github_username", ""),
+        "csrf_token": generate_csrf_token()
+    }
+    # Pass scan_id to template so frontend can fetch scan-specific results
+    return render_template("results.html", 
+        auth=auth_state,
+        csrf_token=generate_csrf_token(),
+        scan_id=scan_id)
+
+@app.route("/dashboard")
+def dashboard():
+    if "github_token" not in session:
+        return redirect("/")
+    auth_state = {
+        "is_authenticated": True,
+        "username": session.get("github_username", ""),
+        "csrf_token": generate_csrf_token()
+    }
+    return render_template("dashboard.html", auth=auth_state, csrf_token=generate_csrf_token())
+
+@app.route("/pr-analyzer")
+def pr_analyzer():
+    """PR Risk Analyzer page - requires authentication."""
+    if "github_token" not in session:
+        return redirect("/")
+    auth_state = {
+        "is_authenticated": True,
+        "username": session.get("github_username", ""),
+        "avatar": session.get("github_avatar", ""),
+        "csrf_token": generate_csrf_token()
+    }
+    return render_template("pr_analyzer.html", auth=auth_state, csrf_token=generate_csrf_token())
+
+@app.route("/about")
+def about():
+    auth_state = {
+        "is_authenticated": "github_token" in session,
+        "username": session.get("github_username", ""),
+        "csrf_token": generate_csrf_token()
+    }
+    return render_template("about.html", auth=auth_state, csrf_token=generate_csrf_token())
+
+
+
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "ok",
+        "model_loaded": app_state["model"] is not None
+    })
+
+@app.errorhandler(404)
+def not_found(e):
+    auth_state = {
+        "is_authenticated": "github_token" in session,
+        "username": session.get("github_username", ""),
+        "csrf_token": generate_csrf_token()
+    }
+    return render_template("404.html", auth=auth_state), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    auth_state = {
+        "is_authenticated": "github_token" in session,
+        "username": session.get("github_username", ""),
+        "csrf_token": generate_csrf_token()
+    }
+    return render_template("500.html", auth=auth_state), 500
+
+@app.after_request
+def security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
+def create_app():
     logger.info("=" * 50)
-    logger.info("CodeSentinel Dashboard → http://localhost:5000")
+    logger.info("AI Bug Predictor Starting...")
     logger.info("=" * 50)
     
     try:
@@ -1552,6 +1616,10 @@ if __name__ == "__main__":
         import sys
         sys.exit(1)
         
-    app.run(host="localhost", port=5000, debug=True, use_reloader=False)
+    return app
+
+if __name__ == "__main__":
+    flask_app = create_app()
+    flask_app.run(host="localhost", port=5000, debug=True, use_reloader=False)
 
 

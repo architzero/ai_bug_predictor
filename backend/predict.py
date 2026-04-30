@@ -10,16 +10,15 @@ def _assign_risk_tiers_percentile(df):
     """
     Assign risk tiers based on within-repository percentile ranking.
     
-    This is robust to base rate shifts and ensures every scan produces
-    actionable results regardless of absolute probability values.
+    FIX: Use strict rank-based percentile cutoffs.
+    When files have identical risk scores, assign tiers based on
+    their RANK position, not score-based percentiles.
     
     Tiers:
     - CRITICAL: Top 10% of files by risk score (within each repo)
     - HIGH: 10-25% (next 15%)
     - MODERATE: 25-50% (next 25%)
     - LOW: Bottom 50%
-    
-    CRITICAL: Tiers are assigned PER REPOSITORY, not globally.
     """
     if 'risk' not in df.columns or len(df) == 0:
         df['risk_tier'] = 'UNKNOWN'
@@ -30,78 +29,46 @@ def _assign_risk_tiers_percentile(df):
         # Assign tiers per repository
         def assign_tier_for_repo(repo_df):
             repo_df = repo_df.copy()
-            risk_scores = repo_df["risk"].values
-            n = len(risk_scores)
+            n = len(repo_df)
             
-            # Initialize all as LOW (use object dtype to avoid string truncation)
+            # Sort by risk descending and assign ranks
+            repo_df = repo_df.sort_values('risk', ascending=False).reset_index(drop=True)
+            
+            # Calculate tier cutoffs based on RANK (not score)
+            critical_cutoff = int(np.ceil(n * 0.10))  # Top 10%
+            high_cutoff = int(np.ceil(n * 0.25))      # Top 25%
+            moderate_cutoff = int(np.ceil(n * 0.50))  # Top 50%
+            
+            # Assign tiers based on rank position
             tiers = np.array(["LOW"] * n, dtype=object)
+            tiers[:critical_cutoff] = "CRITICAL"
+            tiers[critical_cutoff:high_cutoff] = "HIGH"
+            tiers[high_cutoff:moderate_cutoff] = "MODERATE"
             
-            # Get unique risk values and their counts, sorted descending
-            unique_risks, counts = np.unique(risk_scores, return_counts=True)
-            unique_risks = unique_risks[::-1]  # Sort descending
-            counts = counts[::-1]
-            
-            # Assign tiers based on cumulative rank position
-            cumulative_rank = 0
-            for unique_risk, count in zip(unique_risks, counts):
-                # Find all files with this risk score
-                mask = risk_scores == unique_risk
-                
-                # Calculate percentile for this group (use minimum rank for ties)
-                percentile = cumulative_rank / n
-                
-                # Assign tier to all files in this group
-                if percentile < 0.10:
-                    tiers[mask] = "CRITICAL"
-                elif percentile < 0.25:
-                    tiers[mask] = "HIGH"
-                elif percentile < 0.50:
-                    tiers[mask] = "MODERATE"
-                # else: LOW (already set)
-                
-                # Move to next rank group
-                cumulative_rank += count
-            
-            repo_df["risk_tier"] = tiers
+            repo_df['risk_tier'] = tiers
             return repo_df
         
         # Apply per-repo tier assignment
         df = df.groupby('repo', group_keys=False).apply(assign_tier_for_repo)
     else:
         # Fallback: global ranking if no repo column
-        risk_scores = df["risk"].values
-        n = len(risk_scores)
+        n = len(df)
         
-        # Initialize all as LOW (use object dtype to avoid string truncation)
+        # Sort by risk descending and assign ranks
+        df = df.sort_values('risk', ascending=False).reset_index(drop=True)
+        
+        # Calculate tier cutoffs based on RANK (not score)
+        critical_cutoff = int(np.ceil(n * 0.10))  # Top 10%
+        high_cutoff = int(np.ceil(n * 0.25))      # Top 25%
+        moderate_cutoff = int(np.ceil(n * 0.50))  # Top 50%
+        
+        # Assign tiers based on rank position
         tiers = np.array(["LOW"] * n, dtype=object)
+        tiers[:critical_cutoff] = "CRITICAL"
+        tiers[critical_cutoff:high_cutoff] = "HIGH"
+        tiers[high_cutoff:moderate_cutoff] = "MODERATE"
         
-        # Get unique risk values and their counts, sorted descending
-        unique_risks, counts = np.unique(risk_scores, return_counts=True)
-        unique_risks = unique_risks[::-1]  # Sort descending
-        counts = counts[::-1]
-        
-        # Assign tiers based on cumulative rank position
-        cumulative_rank = 0
-        for unique_risk, count in zip(unique_risks, counts):
-            # Find all files with this risk score
-            mask = risk_scores == unique_risk
-            
-            # Calculate percentile for this group (use minimum rank for ties)
-            percentile = cumulative_rank / n
-            
-            # Assign tier to all files in this group
-            if percentile < 0.10:
-                tiers[mask] = "CRITICAL"
-            elif percentile < 0.25:
-                tiers[mask] = "HIGH"
-            elif percentile < 0.50:
-                tiers[mask] = "MODERATE"
-            # else: LOW (already set)
-            
-            # Move to next rank group
-            cumulative_rank += count
-        
-        df["risk_tier"] = tiers
+        df['risk_tier'] = tiers
     
     return df
 

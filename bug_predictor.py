@@ -12,6 +12,7 @@ from backend.train import load_model_version
 from backend.predict import predict
 from backend.explainer import explain_prediction
 from backend.config import SZZ_CACHE_DIR, BASE_DIR
+from backend.visualizations import create_risk_dashboard, create_tier_summary_table
 
 
 def clone_if_needed(repo_input):
@@ -32,9 +33,19 @@ def clone_if_needed(repo_input):
             print(f"✓ Cloned to {temp_dir}")
             return temp_dir, True  # Return path and is_temp flag
         except subprocess.CalledProcessError as e:
-            print(f"\n❌ ERROR: Failed to clone repository!")
-            print(f"Git error: {e.stderr}")
-            sys.exit(1)
+            if e.stderr and "Clone succeeded, but checkout failed" in e.stderr:
+                print(f"\n⚠ WARNING: Git checkout partially failed (likely OS path constraints).")
+                print(f"  Forcing checkout of valid files...")
+                try:
+                    subprocess.run(["git", "config", "core.protectNTFS", "false"], cwd=temp_dir, check=True)
+                    subprocess.run(["git", "checkout", "-f", "HEAD"], cwd=temp_dir, check=False)
+                except Exception as checkout_err:
+                    print(f"  ⚠ Forced checkout failed: {checkout_err}")
+                return temp_dir, True
+            else:
+                print(f"\n❌ ERROR: Failed to clone repository!")
+                print(f"Git error: {e.stderr}")
+                sys.exit(1)
     else:
         # Local path
         if not os.path.exists(repo_input):
@@ -153,6 +164,16 @@ def run(repo_input):
     df = explain_prediction(model, df, save_plots=True, top_local=5)
     print(f"   ✓ Generated SHAP explanations")
     
+    # Generate easy-to-understand visualizations
+    print(f"\n6. Creating visual dashboard...")
+    try:
+        dashboard_path = create_risk_dashboard(df, os.path.basename(repo_path))
+        summary_path = create_tier_summary_table(df, os.path.basename(repo_path))
+        print(f"   ✓ Created dashboard: {os.path.basename(dashboard_path)}")
+        print(f"   ✓ Created summary table: {os.path.basename(summary_path)}")
+    except Exception as e:
+        print(f"   ⚠ Could not create dashboard: {e}")
+    
     # Validate explanations are not empty
     empty_explanations = df[df['explanation'].str.strip() == ''].shape[0]
     if empty_explanations > 0:
@@ -204,7 +225,14 @@ def run(repo_input):
         risk_pct = f"{row['risk']:.1%}"
         tier = row.get('risk_tier', 'UNKNOWN')
         loc = int(row.get('loc', 0))
-        filename = os.path.basename(str(row['file']))
+        
+        # FIX: Show relative path to avoid confusion with duplicate filenames
+        full_path = str(row['file'])
+        if os.path.isabs(full_path) and repo_path in full_path:
+            filename = os.path.relpath(full_path, repo_path)
+        else:
+            filename = os.path.basename(full_path)
+        
         explanation = row.get('explanation', 'No explanation available')
         
         # Format risk percentage with better precision for clustered scores
@@ -229,10 +257,12 @@ def run(repo_input):
     print(f"  • Files with similar scores should be prioritized by tier, then by LOC")
     
     plots_dir = os.path.abspath('ml/plots')
-    print(f"\nSHAP plots saved to: {plots_dir}")
-    print(f"  - global_bar.png: Feature importance")
-    print(f"  - global_beeswarm.png: Feature distribution")
-    print(f"  - local_waterfall_*.png: Per-file explanations")
+    print(f"\nVisualizations saved to: {plots_dir}")
+    print(f"  - dashboard_{os.path.basename(repo_path)}.png: Easy-to-understand overview")
+    print(f"  - summary_table_{os.path.basename(repo_path)}.png: Tier statistics")
+    print(f"  - global_bar.png: Feature importance (technical)")
+    print(f"  - global_beeswarm.png: Feature distribution (technical)")
+    print(f"  - local_waterfall_*.png: Per-file explanations (technical)")
     print(f"\nFor best results:")
     print(f"  - Review CRITICAL tier files first (top 10%)")
     print(f"  - Use tier rankings when risk scores are clustered")

@@ -112,11 +112,12 @@ def _interpret_risk_score(prob, n_samples=None, confidence_level="High"):
 class _IsotonicWrapper:
     """Wrapper for IsotonicRegression to match sklearn classifier interface.
     
-    CRITICAL FIX: Spread probabilities to avoid clustering at extremes.
-    When all predictions cluster at 0.95+, we lose discrimination ability.
-    Apply light smoothing to spread predictions while preserving ranking.
+    FIX: Enhanced anti-clustering with adaptive spreading.
+    When predictions cluster at extremes (>95% or <5%), we apply
+    rank-based spreading to preserve discrimination while maintaining
+    relative ordering.
     """
-    def __init__(self, iso_reg, cap_min=0.01, cap_max=0.95):
+    def __init__(self, iso_reg, cap_min=0.001, cap_max=0.999):
         self.iso_reg = iso_reg
         self.multi_class = "ovr"  # For compatibility
         self.cap_min = cap_min
@@ -125,19 +126,32 @@ class _IsotonicWrapper:
     def predict_proba(self, X):
         cal_proba = self.iso_reg.transform(X.ravel())
         
-        # Apply moderate capping to prevent extreme clustering (0.01-0.95)
-        # This preserves discrimination while avoiding all files at 95%+
+        # Apply minimal capping to prevent exact 0/1 (0.001-0.999)
         cal_proba = np.clip(cal_proba, self.cap_min, self.cap_max)
         
-        # Apply light smoothing if predictions are too clustered
+        # ENHANCED: Detect and fix severe clustering
         if len(cal_proba) > 10:
-            std = np.std(cal_proba)
-            if std < 0.05:  # Very low variance = clustering issue
-                # Spread predictions using percentile-based transformation
+            # Check for clustering at extremes
+            high_cluster = np.sum(cal_proba > 0.95) / len(cal_proba)
+            low_cluster = np.sum(cal_proba < 0.05) / len(cal_proba)
+            
+            # If >30% of predictions cluster at extremes, apply adaptive spreading
+            if high_cluster > 0.30 or low_cluster > 0.30:
+                # Use rank-based transformation to spread predictions
                 ranks = np.argsort(np.argsort(cal_proba))
                 percentiles = ranks / (len(ranks) - 1) if len(ranks) > 1 else np.array([0.5])
-                # Map percentiles to 0.2-0.9 range to preserve discrimination
-                cal_proba = 0.2 + percentiles * 0.7
+                
+                # Map to 0.15-0.95 range (wider than before for better discrimination)
+                # This preserves relative ordering while preventing extreme clustering
+                cal_proba = 0.15 + percentiles * 0.80
+            
+            # Secondary check: if variance is still too low, apply light spreading
+            elif np.std(cal_proba) < 0.08:
+                ranks = np.argsort(np.argsort(cal_proba))
+                percentiles = ranks / (len(ranks) - 1) if len(ranks) > 1 else np.array([0.5])
+                # Blend original with rank-based (70% original, 30% spread)
+                spread_proba = 0.20 + percentiles * 0.70
+                cal_proba = 0.70 * cal_proba + 0.30 * spread_proba
         
         return np.column_stack([1 - cal_proba, cal_proba])
 
