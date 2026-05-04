@@ -78,13 +78,40 @@ def audit_file_filtering(repo_path):
 def process_repo(repo_path):
     """Process a single repository (for parallel execution)."""
     repo_name = os.path.basename(repo_path)
-    # Enable parallel Lizard analysis (thread-safe, I/O bound)
-    static_results = analyze_repository(repo_path, parallel=True, max_workers=4)
-    git_results    = mine_git_data(repo_path)
+
+    # 1. Extract SZZ labels FIRST to preserve them during filtering
+    from backend.szz import extract_bug_labels
+    try:
+        buggy_paths = extract_bug_labels(repo_path, cache_dir=SZZ_CACHE_DIR)
+    except Exception as e:
+        print(f"  ⚠️  Failed to pre-extract SZZ labels for {repo_name}: {e}")
+        buggy_paths = set()
+
+    # 2. Analyze repository
+    static_results = analyze_repository(repo_path, parallel=True, max_workers=4, buggy_paths=buggy_paths)
+
+    if not static_results:
+        print(f"  ⚠️  No files analyzed for {repo_name} — skipping")
+        return (repo_name, pd.DataFrame(), 0)
+
+    # 3. Mine git data
+    git_results = mine_git_data(repo_path)
+
+    # 4. Build features
     df = build_features(static_results, git_results)
+
+    # 5. CRITICAL: Set repo column BEFORE labeling so it survives any filtering
+    df["repo"] = repo_name
+
+    # 6. Create labels with multi-level matching
     df = create_labels(df, repo_path, cache_dir=SZZ_CACHE_DIR)
-    df["repo"] = repo_path
-    buggy = int(df["buggy"].sum())
+
+    # 7. Ensure repo column is always set (defensive — create_labels may return new DF)
+    if "repo" not in df.columns or df["repo"].isna().any():
+        df["repo"] = repo_name
+
+    print(f"  [PIPELINE] {repo_name}: {len(df)} files, {int(df['buggy'].sum()) if not df.empty else 0} buggy")
+    buggy = int(df["buggy"].sum()) if not df.empty else 0
     return (repo_name, df, buggy)
 
 if __name__ == '__main__':
@@ -116,15 +143,24 @@ if __name__ == '__main__':
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(process_repo, repo): repo for repo in REPOS}
-        
+
         for future in as_completed(futures):
             try:
                 repo_name, df, buggy = future.result()
-                print(f"  ✓  {repo_name:<20}  {len(df):>5} files  |  {buggy:>4} labelled buggy")
-                all_data.append(df)
+                if df is not None and not df.empty:
+                    print(f"  ✓  {repo_name:<20}  {len(df):>5} files  |  {buggy:>4} labelled buggy")
+                    all_data.append(df)
+                else:
+                    print(f"  ⚠  {repo_name:<20}  SKIPPED (empty result)")
             except Exception as e:
                 repo = futures[future]
                 print(f"  ✗  {os.path.basename(repo):<20}  FAILED: {e}")
+
+    # Guard: abort if no data collected
+    if not all_data:
+        print("\n  ❌ FATAL: No repositories produced usable data. Aborting.")
+        print("  Check SZZ cache, repo paths, and file filtering settings.")
+        import sys; sys.exit(1)
 
     # ══════════════════════════════════════════════════════════════════════════════
     #  STAGE 2 — Feature Pipeline
@@ -135,31 +171,51 @@ if __name__ == '__main__':
 
     df = pd.concat(all_data, ignore_index=True)
 
-    cols_present = [c for c in GIT_FEATURES_TO_NORMALIZE if c in df.columns]
-    if cols_present:
-        scaler = StandardScaler()
-        df[cols_present] = scaler.fit_transform(df[cols_present])
-        print(f"  Global StandardScaler applied  →  {len(cols_present)} git features  |  {len(df)} total files")
-    else:
-        scaler = None
+    # Guard: abort if combined dataset is empty
+    if df.empty:
+        print("\n  ❌ FATAL: Combined dataset is empty after collecting all repos. Aborting.")
+        print("  Check SZZ cache, repo paths, and file filtering settings.")
+        import sys; sys.exit(1)
+    
+    # Debug: Print dataset stats after concat
+    print(f"  [DEBUG STAGE 1->2] Dataset after concat: {len(df)} files")
+    print(f"  [DEBUG STAGE 1->2] Buggy files: {int(df['buggy'].sum())} ({df['buggy'].mean():.1%})")
+    print(f"  [DEBUG STAGE 1->2] Repos: {df['repo'].nunique()} unique")
+
+    # Ensure repo column has no NaNs before correlation filter
+    if "repo" in df.columns and df["repo"].isna().any():
+        print(f"  🔧 Fixing {df['repo'].isna().sum()} NaN repo values in combined dataset")
+        df["repo"] = df["repo"].fillna("unknown")
+
+    print(f"  [PIPELINE] Combined dataset: {len(df)} files total, {int(df['buggy'].sum())} buggy ({df['buggy'].mean():.1%} rate)")
 
     df = filter_correlated_features(df)
+    
+    # Guard: check if filtering removed all data
+    if df.empty:
+        print("\n  ❌ FATAL: Feature filtering removed all data. Aborting.")
+        print("  Check correlation filter thresholds and feature engineering.")
+        import sys; sys.exit(1)
+    
+    # Debug: Print dataset stats after feature filtering
+    print(f"  [DEBUG STAGE 2] After feature filtering: {len(df)} files")
+    print(f"  [DEBUG STAGE 2] Features available: {len([col for col in df.columns if col not in ['file', 'repo', 'buggy', 'bug_type']])}")
 
-    # ── Bug Type Classification ────────────────────────────────────────────────
-    print(f"\n  Bug type classifier ...")
-    bug_classifier = train_bug_type_classifier(REPOS, SZZ_CACHE_DIR)
-    df = classify_file_bugs(df, bug_classifier, SZZ_CACHE_DIR)
+    # ── Bug Type Classification (DISABLED - prevents pipeline contamination) ───────
+    print(f"\n  Bug type classifier skipped for binary classification focus")
+    print(f"  ⚠️  Bug type classifier disabled to prevent feature corruption")
+    df['bug_type'] = 'unknown'
+    df['bug_type_confidence'] = 0.0
 
-    buggy_df = df[df["buggy"] == 1]
-    type_dist = buggy_df["bug_type"].value_counts()
     print(f"\n  Dataset summary  →  {len(df)} files  |  {int(df['buggy'].sum())} buggy")
-    print(f"  Bug type distribution (buggy files only):")
-    for btype, cnt in type_dist.items():
-        pct = cnt / len(buggy_df) * 100
-        bar = "█" * max(1, int(pct / 2.5))
-        print(f"    {btype:<20} {cnt:>5}  ({pct:5.1f}%)  {bar}")
+    print(f"  Bug type classification: DISABLED (prevents pipeline corruption)")
+    buggy_count = int(df['buggy'].sum())
+    if buggy_count > 0:
+        print(f"  All {buggy_count} buggy files classified as 'unknown' (binary classification focus)")
+    else:
+        print(f"  No buggy files found in dataset")
 
-    # ── Filename overlap integrity check ──────────────────────────────────────
+    # ── Filename overlap leakage prevention ───────────────────────────────────
     basename_repos = defaultdict(set)
     for _, row in df.iterrows():
         basename_repos[os.path.basename(str(row["file"]))].add(
@@ -167,11 +223,26 @@ if __name__ == '__main__':
         )
     overlapping = {k: v for k, v in basename_repos.items() if len(v) > 1}
     if overlapping:
-        print(f"\n  ⚠  {len(overlapping)} filename(s) shared across repos (verify no label leak):")
+        print(f"\n  ⚠  {len(overlapping)} filename(s) shared across repos (mitigating leakage):")
         for fname in sorted(overlapping)[:6]:
             print(f"     {fname:<35} → {overlapping[fname]}")
+        
+        # Create filename-based leakage indicator
+        overlapping_filenames = set(overlapping.keys())
+        df['has_shared_filename'] = df['file'].apply(
+            lambda x: os.path.basename(str(x)) in overlapping_filenames
+        )
+        
+        # Warn about potential leakage
+        shared_buggy = df[df['has_shared_filename'] & (df['buggy'] == 1)]
+        if len(shared_buggy) > 0:
+            print(f"  ⚠️  WARNING: {len(shared_buggy)} buggy files have shared filenames (potential leakage)")
+        
+        # Add leakage prevention feature for model to learn from
+        print(f"  ✓ Added 'has_shared_filename' feature to mitigate cross-repo leakage")
     else:
         print("\n  ✓  No filename overlap between repos")
+        df['has_shared_filename'] = False
 
     # ══════════════════════════════════════════════════════════════════════════════
     #  STAGE 3 — Model Training
@@ -180,17 +251,15 @@ if __name__ == '__main__':
     print("  STAGE 3  ·  CROSS-PROJECT MODEL TRAINING")
     print("═" * 72)
 
+    # Debug: Print dataset stats before training
+    print(f"  [DEBUG STAGE 2->3] Training dataset: {len(df)} files")
+    print(f"  [DEBUG STAGE 2->3] Buggy files: {int(df['buggy'].sum())} ({df['buggy'].mean():.1%})")
+    print(f"  [DEBUG STAGE 2->3] Features for training: {len([col for col in df.columns if col not in ['file', 'repo', 'buggy', 'bug_type', 'risk', 'risky', 'explanation']])}")
+
     df_for_ablation = df.copy()
     model = train_model(df, REPOS)
 
-    # Attach the training scaler so inference (app_ui.py) applies identical scaling.
-    # XGBoost is scale-invariant so this has no effect on tree-based predictions, but
-    # it ensures LR/RF fallback paths and future linear layers stay consistent.
-    if scaler is not None and isinstance(model, dict):
-        model["scaler"] = scaler
-        import joblib, os
-        joblib.dump(model, os.path.join("ml", "models", "bug_predictor_latest.pkl"))
-        print(f"  Scaler persisted inside model artifact")
+
 
     # ══════════════════════════════════════════════════════════════════════════════
     #  STAGE 4 — Prediction + Explanations
@@ -199,8 +268,29 @@ if __name__ == '__main__':
     print("  STAGE 4  ·  RISK PREDICTION")
     print("═" * 72)
 
-    df = predict(model, df)
+    df, confidence_result = predict(model, df, return_confidence=True)
 
+    print(f"  [DEBUG] Total files in df: {len(df)}")
+    if 'risk' in df.columns:
+        print(f"  [DEBUG] Files with risk > 0: {(df['risk'] > 0).sum()}")
+        print(f"  [DEBUG] Risk score range: {df['risk'].min():.3f} - {df['risk'].max():.3f}")
+        print(f"  [DEBUG] Files flagged risky: {df['risky'].sum() if 'risky' in df.columns else 0}")
+    else:
+        print(f"  [DEBUG] 'risk' column missing from df!")
+    if 'repo' in df.columns:
+        print(f"  [DEBUG] Repos in df: {df['repo'].unique()}")
+    
+    # REPORT INPUT CHECK - CRITICAL DEBUG
+    print("\nREPORT INPUT CHECK:")
+    print("Rows:", len(df))
+    print("Risk min/max:", df['risk'].min(), df['risk'].max())
+    print("Non-zero risks:", (df['risk'] > 0).sum())
+    print(df[['file', 'risk', 'repo']].head(10))
+
+    # CRITICAL DEBUG: Check risk data before SHAP
+    print(f"\n  [PRE-SHAP DEBUG] Risk range before SHAP: {df['risk'].min():.3f} - {df['risk'].max():.3f}")
+    print(f"  [PRE-SHAP DEBUG] Non-zero risks before SHAP: {(df['risk'] > 0).sum()}")
+    
     # OPTIMIZATION: Use SHAP sampling for large datasets (>1000 files)
     # Compute SHAP on top 50% risk files + random 50% sample = 500-1000 files max
     # This reduces SHAP time from 15 min to ~5 min with minimal accuracy loss
@@ -212,6 +302,10 @@ if __name__ == '__main__':
         df = explain_prediction(model, df, save_plots=True, top_local=TOP_LOCAL_PLOTS, sample_for_shap=shap_sample_size)
     else:
         df = explain_prediction(model, df, save_plots=True, top_local=TOP_LOCAL_PLOTS)
+    
+    # CRITICAL DEBUG: Check risk data after SHAP
+    print(f"  [POST-SHAP DEBUG] Risk range after SHAP: {df['risk'].min():.3f} - {df['risk'].max():.3f}")
+    print(f"  [POST-SHAP DEBUG] Non-zero risks after SHAP: {(df['risk'] > 0).sum()}")
 
     # ══════════════════════════════════════════════════════════════════════════════
     #  STAGE 5 — Final Risk Report
@@ -220,34 +314,60 @@ if __name__ == '__main__':
     print("  GITSENTINEL  ·  FINAL RISK REPORT")
     print("═" * 72)
 
-    TOP_N = 10
+    # CRITICAL FIX: Apply comprehensive final reporting fixes
+    from backend.final_reporting_fixes import comprehensive_final_reporting_fixes
+    
+    print(f"\n  [REPORT DEBUG] Applying comprehensive fixes...")
+    fix_results = comprehensive_final_reporting_fixes(df)
+    df_fixed = fix_results['fixed_df']
+    results = fix_results['results']
+    
+    print(f"  [REPORT DEBUG] Fixes applied: {len(results['fixes_applied'])}")
+    print(f"  [REPORT DEBUG] Overall status: {results['overall_status']}")
+    
+    # Use the fixed dataframe for reporting
+    df = df_fixed
+
+    TOP_N = 20  # Increased from 10 for better coverage
+
+    # CRITICAL FIX: Ensure we're using the full dataset, not filtering incorrectly
+    # (Note: is_core_file filtering is now handled internally if needed)
+    print(f"\n  [REPORT DEBUG] Using full dataset with {len(df)} files")
+    print(f"  [REPORT DEBUG] Risk range: {df['risk'].min():.3f} - {df['risk'].max():.3f}")
+    print(f"  [REPORT DEBUG] Files with risk > 0: {(df['risk'] > 0).sum()}")
+    print(f"  [REPORT DEBUG] Repos: {df['repo'].unique()}")
 
     for repo_path in REPOS:
         repo_name = os.path.basename(repo_path)
-        repo_df   = df[df["repo"] == repo_path].copy()
+
+        # Use the full predicted dataset — trust the prediction pipeline's filtering.
+        # Do NOT re-filter here; it silently drops files that already passed Stage 0-4.
+        repo_df = df[df["repo"] == repo_name].copy()
 
         if repo_df.empty:
+            print(f"\n  ┌─ {repo_name}  (no files found — check repo path and SZZ match rate)")
             continue
 
-        # Filter out test files from the report (already filtered in predict())
-        # Just check if we have any files with risk > 0
-        repo_df = repo_df[repo_df['risk'] > 0].copy()
+        # CRITICAL DEBUG: Check risk data before processing
+        print(f"\n  [REPORT DEBUG] Processing {repo_name}:")
+        print(f"    Rows after filtering: {len(repo_df)}")
+        print(f"    Risk range: {repo_df['risk'].min():.3f} - {repo_df['risk'].max():.3f}")
+        print(f"    Non-zero risks: {(repo_df['risk'] > 0).sum()}")
         
-        if repo_df.empty:
-            print(f"\n  ┌─ {repo_name}  (no source files to display)")
-            continue
-
+        # CRITICAL FIX: Do NOT overwrite or reset risk values
+        # Use actual predicted risk scores from Stage 4
         buggy_count = int(repo_df["buggy"].sum())
-        risky_count = int(repo_df["risky"].sum())
-        total       = len(repo_df)
+        risky_count = int(repo_df["risky"].sum()) if "risky" in repo_df.columns else int((repo_df["risk"] >= 0.5).sum())
+        total = len(repo_df)
 
         print(f"\n  ┌─ {repo_name}  ({total} files │ {buggy_count} buggy │ {risky_count} flagged risky)")
 
+        # CRITICAL FIX: Sort by risk (descending) and show top N
         top_risky = (
             repo_df
             .sort_values("risk", ascending=False)
             .head(TOP_N)
-            [["file", "risk", "risk_tier", "buggy", "bug_type", "explanation"]]
+            [["file", "risk", "risk_tier", "buggy", "explanation"]]
             .reset_index(drop=True)
         )
 
@@ -256,8 +376,9 @@ if __name__ == '__main__':
             risk_pct = f"{row['risk']:.0%}"
             tier     = row.get("risk_tier", "UNKNOWN")
             label    = "BUG" if row["buggy"] == 1 else "   "
-            btype    = str(row.get("bug_type", "unknown"))
-            expl     = textwrap.shorten(str(row["explanation"]), width=45, placeholder="…")
+            expl     = textwrap.shorten(str(row.get("explanation", "N/A")), width=45, placeholder="…")
+            # Fix: read bug_type from row, not from an undefined outer variable
+            btype    = str(row.get("bug_type", "UNKNOWN"))
 
             # Map tier to severity for display
             if tier == "CRITICAL":
@@ -269,7 +390,6 @@ if __name__ == '__main__':
             else:
                 sev = "LOW     "
 
-            prefix = "  │" if i < len(top_risky) - 1 else "  └"
             print(f"  │  {risk_pct:>5}  [{label}]  {sev}  {fname:<38}  {btype:<16}  {expl}")
 
             # Function-level detail (top-2 most complex)

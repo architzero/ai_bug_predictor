@@ -274,62 +274,140 @@ def _save_local_plots(shap_values, expected_value, X_test, index, label):
     plt.rcParams['font.size'] = 11
     plt.rcParams['font.family'] = 'sans-serif'
 
-    safe_label = label.replace("/", "_").replace("\\", "_")
+    # Sanitize label for filename - handle pandas Series or other types
+    if hasattr(label, 'name'):
+        label = str(label.name) if label.name else "file"
+    else:
+        label = str(label)
+    
+    # Remove problematic characters and limit length
+    safe_label = label.replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace('"', "_").replace("<", "_").replace(">", "_").replace("|", "_").replace(" ", "_").replace(".", "_")
+    # Truncate if too long
+    safe_label = safe_label[:30] if len(safe_label) > 30 else safe_label
+    # Ensure it doesn't start with a dot or dash or is empty
+    if not safe_label or safe_label.startswith(('.', '-')):
+        safe_label = "file_" + safe_label[1:] if safe_label else "file"
+    # Remove any remaining problematic characters
+    import re
+    safe_label = re.sub(r'[^\w_-]', '', safe_label)
+    # Ensure it's not empty after cleaning
+    if not safe_label:
+        safe_label = "file"
 
     sv = shap_values[index]
+    # Ensure sv is strictly 1-D (handles 2D and 3D SHAP outputs)
+    if sv.ndim == 3:
+        # (n_features, n_classes) — pick class-1 axis
+        sv = sv[:, 1] if sv.shape[-1] > 1 else sv[:, 0]
     if sv.ndim == 2:
-        sv = sv[:, 1]
+        sv = sv[:, 1] if sv.shape[-1] > 1 else sv[:, 0]
+    sv = np.asarray(sv, dtype=float).ravel()
 
-    ev = float(expected_value) if np.ndim(expected_value) == 0 else float(expected_value)
+    # Coerce expected_value to scalar
+    ev_raw = expected_value
+    if hasattr(ev_raw, '__len__'):
+        ev_raw = float(ev_raw[1]) if len(ev_raw) > 1 else float(ev_raw[0])
+    ev = float(ev_raw)
 
     # Waterfall plot (TOP 10 features for clarity)
+    # Ensure arrays have matching lengths
+    feature_data = X_test.iloc[index].values
+    feature_names = list(X_test.columns)
+    
+    # Truncate if necessary to prevent index errors
+    if len(sv) != len(feature_data):
+        min_len = min(len(sv), len(feature_data), len(feature_names))
+        sv = sv[:min_len]
+        feature_data = feature_data[:min_len]
+        feature_names = feature_names[:min_len]
+    
     explanation = shap.Explanation(
         values=sv,
         base_values=ev,
-        data=X_test.iloc[index].values,
-        feature_names=list(X_test.columns)
+        data=feature_data,
+        feature_names=feature_names
     )
     
-    fig, ax = plt.subplots(figsize=(12, 8))
-    shap.plots.waterfall(explanation, show=False, max_display=10)
-    plt.title(f'SHAP Waterfall: {label}', fontsize=14, fontweight='bold', pad=15)
-    plt.xlabel('SHAP Value', fontsize=11, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(
-        f"{PLOTS_DIR}/local_waterfall_{safe_label}.png",
-        dpi=300, 
-        bbox_inches="tight",
-        facecolor='white'
-    )
-    plt.close()
+    try:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        shap.plots.waterfall(explanation, show=False, max_display=10)
+        plt.title(f'SHAP Waterfall: {label}', fontsize=14, fontweight='bold', pad=15)
+        plt.xlabel('SHAP Value', fontsize=11, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(
+            f"{PLOTS_DIR}/local_waterfall_{safe_label}.png",
+            dpi=300, 
+            bbox_inches="tight",
+            facecolor='white'
+        )
+        plt.close()
+    except Exception as e:
+        print(f"Warning: Could not create waterfall plot for {label}: {e}")
+        plt.close()
+        # Create a simple bar plot as fallback
+        try:
+            fig, ax = plt.subplots(figsize=(12, 8))
+            feature_importance = [(name, val) for name, val in zip(feature_names, sv)]
+            feature_importance.sort(key=lambda x: abs(x[1]), reverse=True)
+            top_features = feature_importance[:10]
+            
+            names, values = zip(*top_features)
+            colors = ['red' if v > 0 else 'blue' for v in values]
+            
+            bars = ax.barh(range(len(names)), values, color=colors, alpha=0.7)
+            ax.set_yticks(range(len(names)))
+            ax.set_yticklabels(names)
+            ax.set_xlabel('SHAP Value')
+            ax.set_title(f'SHAP Feature Importance: {label}')
+            
+            # Add value labels on bars
+            for i, (bar, val) in enumerate(zip(bars, values)):
+                ax.text(val + (0.01 if val > 0 else -0.01), i, f'{val:.3f}', 
+                       ha='left' if val > 0 else 'right', va='center')
+            
+            plt.tight_layout()
+            plt.savefig(
+                f"{PLOTS_DIR}/local_waterfall_{safe_label}.png",
+                dpi=300, 
+                bbox_inches="tight",
+                facecolor='white'
+            )
+            plt.close()
+            print(f"Created fallback bar plot for {label}")
+        except Exception as e2:
+            print(f"Warning: Could not create fallback plot for {label}: {e2}")
 
     # Force plot (TOP 10 features for clarity)
-    fig, ax = plt.subplots(figsize=(14, 3))
-    
-    # Get top 10 features by absolute SHAP value
-    top_indices = np.argsort(np.abs(sv))[-10:][::-1]
-    sv_top = sv[top_indices]
-    features_top = X_test.iloc[index].iloc[top_indices]
-    feature_names_top = [X_test.columns[i] for i in top_indices]
-    
-    shap.force_plot(
-        ev,
-        sv_top,
-        features_top,
-        feature_names=feature_names_top,
-        matplotlib=True,
-        show=False,
-        text_rotation=10
-    )
-    plt.title(f'SHAP Force Plot: {label}', fontsize=14, fontweight='bold', pad=15)
-    plt.tight_layout()
-    plt.savefig(
-        f"{PLOTS_DIR}/local_force_{safe_label}.png",
-        dpi=300, 
-        bbox_inches="tight",
-        facecolor='white'
-    )
-    plt.close()
+    try:
+        fig, ax = plt.subplots(figsize=(14, 3))
+        
+        # Get top 10 features by absolute SHAP value
+        top_indices = np.argsort(np.abs(sv))[-10:][::-1]
+        sv_top = sv[top_indices]
+        features_top = X_test.iloc[index].iloc[top_indices]
+        feature_names_top = [X_test.columns[i] for i in top_indices]
+        
+        shap.force_plot(
+            ev,
+            sv_top,
+            features_top,
+            feature_names=feature_names_top,
+            matplotlib=True,
+            show=False,
+            text_rotation=10
+        )
+        plt.title(f'SHAP Force Plot: {label}', fontsize=14, fontweight='bold', pad=15)
+        plt.tight_layout()
+        plt.savefig(
+            f"{PLOTS_DIR}/local_force_{safe_label}.png",
+            dpi=300, 
+            bbox_inches="tight",
+            facecolor='white'
+        )
+        plt.close()
+    except Exception as e:
+        print(f"Warning: Could not create force plot for {label}: {e}")
+        plt.close()
 
 
 def _explain_feature_human_readable(feature_name, value, shap_value, direction="increases", repo_median=None):
@@ -354,7 +432,7 @@ def _explain_feature_human_readable(feature_name, value, shap_value, direction="
     
     # Calculate ratio to repo median if available
     ratio = None
-    if repo_median is not None and repo_median > 0:
+    if repo_median is not None and repo_median > 0 and isinstance(value, (int, float)):
         ratio = value / repo_median
     
     # Context-relative explanations
@@ -400,7 +478,7 @@ def _explain_feature_human_readable(feature_name, value, shap_value, direction="
         # Context-relative threshold for large commits
         if repo_median and ratio and value > repo_median * 3:
             return f"Very large single change ({int(value)} lines, {ratio:.1f}× repo median)"
-        elif value > 500:  # Absolute threshold for truly massive changes
+        elif isinstance(value, (int, float)) and value > 500:  # Absolute threshold for truly massive changes
             return f"Very large single change ({int(value)} lines added at once)"
         else:
             return None
@@ -451,6 +529,11 @@ def _explain_feature_human_readable(feature_name, value, shap_value, direction="
         "commits_3m": lambda v: f"Moderate recent activity ({v:.0f} commits in 3 months)" if v > 10 else None,
         "recent_churn_ratio": lambda v: f"High recent churn ({v:.1%} of changes are recent)" if v > 0.3 else None,
         "recent_activity_score": lambda v: f"Elevated recent activity ({v:.3f})" if v > 0.5 else None,
+        
+        # New high-value features
+        "churn_ratio": lambda v: f"High overall churn ({v:.1%} of file changed)" if v > 0.5 else None,
+        "author_entropy": lambda v: f"Many contributors ({v:.1%} minor contributors)" if v > 0.3 else None,
+        "experience_score": lambda v: f"Low team experience ({v:.1%} experience score)" if v < 0.5 else None,
         
         # Code churn metrics
         "lines_added": lambda v: f"Significant additions ({v:.0f} lines added)" if v > 500 else None,
@@ -523,7 +606,13 @@ def _generate_human_readable_explanation(shap_values, feature_names, row_data, t
     Returns:
         Human-readable explanation string
     """
-    # Get top contributing features
+    # Get top contributing features - ensure lengths match
+    if len(shap_values) != len(feature_names):
+        # Truncate to match the shorter length
+        min_len = min(len(shap_values), len(feature_names))
+        shap_values = shap_values[:min_len]
+        feature_names = feature_names[:min_len]
+    
     contrib = pd.Series(shap_values, index=feature_names)
     top_features = contrib.abs().sort_values(ascending=False).head(top_n * 3)  # Get more candidates
     
@@ -607,7 +696,15 @@ def explain_prediction(model_data, df, save_plots=True, top_local=5, sample_for_
         df_sample = df
         sample_indices = df.index
     
-    shap_values, expected_value, X_display = _compute_shap(model, X_sample)
+    # Ensure we only use the features the model expects
+    model_features = getattr(model, 'feature_names_in_', None)
+    if model_features is not None:
+        # Only use the features the model was trained on
+        X_for_shap = X_sample[model_features]
+    else:
+        X_for_shap = X_sample
+    
+    shap_values, expected_value, X_display = _compute_shap(model, X_for_shap)
     
     # Compute repo medians for context-relative explanations (use full dataset)
     repo_medians = {}
@@ -632,13 +729,13 @@ def explain_prediction(model_data, df, save_plots=True, top_local=5, sample_for_
     # build human-readable explanation text: top-3 SHAP features per row
     # For files not in sample, use a generic explanation
     explanations = []
-    for i in range(len(df)):
-        idx = df.index[i]
-        
+    for idx in df.index:
         if idx in sample_indices:
-            # File was in SHAP sample - use actual SHAP values
-            sample_pos = df_sample.index.get_loc(idx)
-            row_data = X_display.iloc[sample_pos].to_dict()
+            # File has SHAP explanation computed
+            sample_pos = list(sample_indices).index(idx)
+            
+            # Get the row data from the original dataframe
+            row_data = df.loc[idx].to_dict()
             
             # Handle SHAP values dimensionality
             if shap_values[sample_pos].ndim == 2:
@@ -646,8 +743,18 @@ def explain_prediction(model_data, df, save_plots=True, top_local=5, sample_for_
             else:
                 shap_row = shap_values[sample_pos]
             
+            # Ensure SHAP values match feature count
+            feature_names = list(X_display.columns)
+            if len(shap_row) != len(feature_names):
+                # Truncate to match the model's expected features
+                min_len = min(len(shap_row), len(feature_names))
+                shap_row = shap_row[:min_len]
+                feature_names = feature_names[:min_len]
+                # Also truncate row_data to match
+                row_data = {k: v for k, v in list(row_data.items())[:min_len]}
+            
             human_explanations = _generate_human_readable_explanation(
-                shap_row, X_display.columns, row_data, top_n=3, repo_medians=repo_medians
+                shap_row, feature_names, row_data, top_n=3, repo_medians=repo_medians
             )
             
             # Format as bullet points for better readability
@@ -667,7 +774,7 @@ def explain_prediction(model_data, df, save_plots=True, top_local=5, sample_for_
         
         explanations.append(explanation_text)
 
-    result = df.copy()
+    result = df.copy()  # Use original full dataframe, not sample
     result["explanation"] = explanations
 
     return result
@@ -790,6 +897,9 @@ def _counterfactual_action_text(feature: str, current: float, target: float, dir
         "loc":                  f"Split this file — {current:.0f} lines is above healthy size",
         "max_function_length":  f"Break up long functions (max {current:.0f} lines, target {target:.0f})",
         "recent_churn_ratio":   f"Stabilize — {current:.1%} of changes are very recent, wait before adding more",
+        "churn_ratio":        f"Reduce overall churn — {current:.1%} of file has been changed",
+        "author_entropy":     f"Consider reducing contributors — too many different authors",
+        "experience_score":    f"Assign more experienced developers — current experience score {current:.1%}",
         "temporal_bug_risk":    f"Address historical defects in this file before new changes",
         "has_test_file":        f"Add a test file — this file has no corresponding unit tests",
     }

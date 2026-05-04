@@ -72,9 +72,7 @@ BUG_TYPE_KEYWORDS = {
     "security": [
         "security", "vulnerability", "exploit", "injection",
         "xss", "csrf", "sql injection", "code injection",
-        "authentication", "authorization", "privilege escalation",
-        "buffer overflow", "overflow", "underflow",
-        "sanitize", "sanitization", "escape", "validation"
+        "privilege escalation", "buffer overflow"
     ],
     
     "performance": [
@@ -181,11 +179,76 @@ class BugTypeClassifier:
         """
         if len(messages) < 10:
             raise ValueError("Need at least 10 training examples")
+            
+        # CRITICAL FIX: Check for class dominance before training
+        from collections import Counter
+        counts = Counter(bug_types)
+        print(f"  Bug type counts before merge: {dict(counts)}")
+        
+        # Check for single class dominance (>90%)
+        total_count = len(bug_types)
+        dominant_class = max(counts.items(), key=lambda x: x[1])
+        dominant_percentage = dominant_class[1] / total_count
+        
+        if dominant_percentage > 0.9:
+            print(f"  🚨 CRITICAL: Single class dominance detected!")
+            print(f"     Class '{dominant_class[0]}' is {dominant_percentage:.1%} of all samples")
+            print(f"     This destroys interpretability and signal quality")
+            print(f"     DISCARDING bug type feature entirely")
+            
+            # Return failure status to disable bug type features
+            return {
+                'training_samples': len(messages),
+                'test_samples': 0,
+                'accuracy': 0.0,
+                'class_distribution': dict(counts),
+                'unique_bug_types': len(set(bug_types)),
+                'status': 'FAILED',
+                'reason': 'Single class dominance >90%',
+                'dominant_class': dominant_class[0],
+                'dominant_percentage': dominant_percentage
+            }
+        
+        # Merge rare classes (< 5 samples) into 'other'
+        bug_types = [bt if counts[bt] >= 5 else 'other' for bt in bug_types]
+        
+        # Verify the merge
+        new_counts = Counter(bug_types)
+        print(f"  Bug type counts after merge: {dict(new_counts)}")
+        
+        # Check for dominance after merge
+        total_after = len(bug_types)
+        dominant_after = max(new_counts.items(), key=lambda x: x[1])
+        dominant_after_percentage = dominant_after[1] / total_after
+        
+        if dominant_after_percentage > 0.9:
+            print(f"  🚨 CRITICAL: Still dominant after merge!")
+            print(f"     Class '{dominant_after[0]}' is {dominant_after_percentage:.1%} after merge")
+            print(f"     DISCARDING bug type feature entirely")
+            
+            return {
+                'training_samples': len(messages),
+                'test_samples': 0,
+                'accuracy': 0.0,
+                'class_distribution': dict(new_counts),
+                'unique_bug_types': len(set(bug_types)),
+                'status': 'FAILED',
+                'reason': 'Single class dominance >90% after merge',
+                'dominant_class': dominant_after[0],
+                'dominant_percentage': dominant_after_percentage
+            }
         
         # Split data for evaluation
-        X_train, X_test, y_train, y_test = train_test_split(
-            messages, bug_types, test_size=0.2, random_state=42, stratify=bug_types
-        )
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                messages, bug_types, test_size=0.2, random_state=42, stratify=bug_types
+            )
+        except ValueError as e:
+            print(f"  Warning: Stratified split failed: {e}")
+            print("  Falling back to non-stratified split.")
+            X_train, X_test, y_train, y_test = train_test_split(
+                messages, bug_types, test_size=0.2, random_state=42
+            )
         
         # Create pipeline
         self.pipeline = Pipeline([

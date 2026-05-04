@@ -20,104 +20,56 @@ from pydriller import Repository, Git
 from backend.config import CACHE_VERSION, SKIP_DIR_PATTERNS, SKIP_FILE_PATTERNS, SZZ_MIN_CHURN_RATIO, SZZ_MAX_FILES_PER_COMMIT, SZZ_MIN_CONFIDENCE, SZZ_LABEL_WINDOW_DAYS
 from backend.analysis import SUPPORTED_EXTENSIONS, get_language
 
-# ── Keyword lists ──────────────────────────────────────────────────────────────
+# ── Keyword lists (Aligned with Correct Design Mandate) ─────────────────────────
 
-# Negative keywords that indicate NON-bug commits (higher priority)
-NEGATIVE_KEYWORDS = [
-    "typo", "readme", "docs", "documentation", "doc",
-    "format", "style", "comment", "rename", "comments",
-    "refactor", "cleanup", "whitespace", "lint", "linting",
-    "update", "upgrade", "bump", "version",  # version bumps
-    "merge", "rebase",  # merge commits
-    "test", "tests", "testing",  # test-only changes
+# HIGH CONFIDENCE signals (Weight: 1.0)
+HIGH_KEYWORDS = [
+    "crash", "exception", "failure", "null", "panic", "segfault",
+    "deadlock", "overflow", "memory leak"
 ]
 
-# Positive keywords that indicate bug fixes (require stronger evidence)
-POSITIVE_KEYWORDS = [
-    "fix", "bug", "error", "crash", "issue",
-    "resolve", "defect", "failure", "hotfix",
-    "incorrect", "exception", "broken",
-    "leak", "null", "npe", "segfault", "overflow",
-    "deadlock", "race", "timeout", "hang",
+# MEDIUM confidence signals (Weight: 0.7)
+MEDIUM_KEYWORDS = [
+    "fix", "bug", "issue", "resolve", "patch", "defect", "broken"
 ]
 
-# Advanced NLP Phrasing matching exact intent:
-NLP_PHRASES = [
-    r"\bfix(?:es|ed)?\s+(?:bug|issue|error|crash)",  # "fixes bug", "fixed issue"
-    r"\bresolve(?:s|d)?\s+(?:bug|issue|error)",  # "resolves bug"
-    r"handle crash", r"prevent null", r"resolve timeout",
-    r"memory leak", r"null pointer", r"edge case",
-    r"regression", r"out of bounds", r"race condition",
-    r"deadlock", r"security vulnerability", r"security fix",
-    r"\brevert\b",  # revert commits are strong bug signals
+# IGNORE / Weak signals (Do not label as bug)
+IGNORE_KEYWORDS = [
+    # Code quality / style (not bugs)
+    "refactor", "cleanup", "rename", "format", "style", "lint",
+    "flake8", "pylint", "mypy", "pyright", "ruff", "black",
+    # Type annotations (not bugs)
+    "typing", "annotation", "type hint", "type check",
+    # Documentation (not bugs)
+    "typo", "docs", "documentation", "readme", "rst", "docstring",
+    "grammar", "spelling", "comment",
+    # Dependency / CI (not bugs)
+    "update", "upgrade", "bump", "pre-commit", "ci", "release", "version"
 ]
-
-# GitHub/Jira Issue Regex - STRICTER version
-# Matches e.g. "fixes #123", "closes #45", "resolves JIRA-1234"
-ISSUE_REGEX = re.compile(
-    r"(?:fix(?:es|ed)?|resolv(?:es|ed)?|clos(?:es|ed)?|patch(?:es|ed)?)\s+(?:#\d+|[A-Z]+-\d+)",
-    re.IGNORECASE
-)
-
-# Revert commit detection
-REVERT_REGEX = re.compile(r"\brevert\b|\brollback\b|\bundo\b", re.IGNORECASE)
-
-# Confidence weight scoring based on commit message strength
-CONFIDENCE_WEIGHTS = {
-    # High confidence (1.0) - explicit bug fixes with issue refs
-    "fix": 0.9, "bug": 0.9, "error": 0.9, "crash": 1.0,
-    "resolve": 0.85, "defect": 0.9, "failure": 0.9, "hotfix": 1.0,
-    
-    # Medium confidence (0.7) - issue references
-    "issue": 0.7, "incorrect": 0.75, "exception": 0.8, "broken": 0.8,
-    
-    # Lower confidence (0.5) - general maintenance
-    "handle": 0.5, "prevent": 0.5, "avoid": 0.5, "correct": 0.6,
-    "missing": 0.5, "invalid": 0.6, "edge": 0.5, "case": 0.4,
-}
 
 def get_commit_confidence(message: str) -> float:
-    """Calculate confidence weight based on commit message keywords.
-    
-    Research-based scoring:
-    - Issue tracker refs: +0.25 boost (strong signal)
-    - Revert commits: +0.35 boost (very strong signal)
-    - NLP phrases: +0.15 boost
-    - Multiple signals: additive boost
+    """
+    Calculate weight based on Correct Design Step 1.
+    HIGH = 1.0, MEDIUM = 0.7, others effectively ignored.
     """
     if not message:
-        return 0.15  # very low confidence for empty messages
+        return 0.0
     
     subject = message.strip().split("\n")[0].lower()
-    max_confidence = 0.25  # baseline confidence
     
-    # Check for negative keywords first (disqualifiers)
-    for neg in NEGATIVE_KEYWORDS:
-        if neg in subject:
-            return 0.1  # Very low confidence for non-bug commits
+    # Priority 0: IGNORE weak keywords
+    if any(kw in subject for kw in IGNORE_KEYWORDS):
+        return 0.0
     
-    # Check positive keywords
-    for keyword, weight in CONFIDENCE_WEIGHTS.items():
-        if keyword in subject:
-            max_confidence = max(max_confidence, weight)
+    # Priority 1: HIGH category
+    if any(kw in subject for kw in HIGH_KEYWORDS):
+        return 1.0
     
-    # Bonus for issue references (strong signal)
-    has_issue_ref = ISSUE_REGEX.search(subject)
-    if has_issue_ref:
-        max_confidence = min(max_confidence + 0.25, 1.0)
-    
-    # Bonus for revert commits (very strong bug signal)
-    is_revert = REVERT_REGEX.search(subject)
-    if is_revert:
-        max_confidence = min(max_confidence + 0.35, 1.0)
-    
-    # Bonus for NLP phrases
-    for phrase in NLP_PHRASES:
-        if re.search(phrase, subject):
-            max_confidence = min(max_confidence + 0.15, 1.0)
-            break  # Only count once
-    
-    return min(max_confidence, 1.0)
+    # Priority 2: MEDIUM category
+    if any(kw in subject for kw in MEDIUM_KEYWORDS):
+        return 0.7
+            
+    return 0.0
 
 def has_substantive_code_changes(file_mod, language: str, min_churn_ratio: float = SZZ_MIN_CHURN_RATIO) -> bool:
     """Check if file has substantive code changes using churn ratio.
@@ -161,7 +113,23 @@ def has_substantive_code_changes(file_mod, language: str, min_churn_ratio: float
     # Calculate churn ratio
     churn_ratio = lines_changed / total_lines
     
-    # Only label if >10% of file was changed
+    # Only label if >10% of file was changed AND at least 3 substantive lines
+    if lines_changed < 3:
+        return False
+    
+    # Count substantive lines (not comments/whitespace)
+    substantive_lines = 0
+    if file_mod.source_code_before:
+        for line in file_mod.source_code_before.split('\n')[:lines_changed]:
+            if is_substantive_line(line, language):
+                substantive_lines += 1
+    
+    # More relaxed substantive line requirement - allow 1 substantive line for small files
+    min_substantive_lines = 1 if lines_changed <= 5 else 2
+    if substantive_lines < min_substantive_lines:
+        return False
+    
+    # Primary check: churn ratio (more inclusive)
     return churn_ratio >= min_churn_ratio
 
 
@@ -206,21 +174,18 @@ GENERATED_PATHS = [f"/{pattern}/" for pattern in SKIP_DIR_PATTERNS]
 # ── Path helpers ───────────────────────────────────────────────────────────────
 
 def _norm_path(filepath):
-    """Normalize to forward-slash + lowercase for cross-platform matching.
-    
-    CRITICAL: This must produce identical output to labeling._norm_rel() for the same input.
-    Normalization steps:
-    1. Replace backslashes with forward slashes
-    2. Convert to lowercase
-    3. Strip leading './' and trailing '/'
+    """Robust path normalization for matching.
+    Requirement: lowercase, forward slashes, repo-relative, no leading './'
     """
-    normalized = filepath.replace("\\", "/").lower()
-    # Strip leading './' (relative path prefix)
-    if normalized.startswith("./"):
-        normalized = normalized[2:]
-    # Strip trailing '/'
-    normalized = normalized.rstrip("/")
-    return normalized
+    if not filepath:
+        return ""
+    # 1. Lowercase and replace backslashes
+    norm = filepath.replace("\\", "/").lower()
+    # 2. Remove leading './' or '/'
+    norm = re.sub(r'^(\./|/)', '', norm)
+    # 3. Strip trailing slashes
+    norm = norm.strip("/")
+    return norm
 
 
 def _repo_key(repo_path):
@@ -232,31 +197,9 @@ def _repo_key(repo_path):
 
 def is_bug_fix(message):
     """
-    Return True iff the commit subject line signals a bug fix.
-    Subject-line only (ignores multi-line body).
-    Negative keywords take priority over positive keywords.
+    Identify bug-fix commits using strong keywords only.
     """
-    if not message:
-        return False
-
-    subject = message.strip().split("\n")[0].lower()
-
-    if any(neg in subject for neg in NEGATIVE_KEYWORDS):
-        return False
-
-    if any(pos in subject for pos in POSITIVE_KEYWORDS):
-        return True
-        
-    for phrase in NLP_PHRASES:
-        if re.search(phrase, subject):
-            return True
-            
-    if ISSUE_REGEX.search(subject):
-        return True
-
-    return False
-
-
+    return get_commit_confidence(message) > 0.0
 def is_test_file(filepath):
     path = _norm_path(filepath)
 
@@ -303,6 +246,17 @@ def _load_szz_cache(repo_path, cache_dir):
     try:
         with open(path, "rb") as f:
             buggy_files = pickle.load(f)
+        
+        # VALIDATION: Ensure new format {'path': {'confidence': f, 'bug_count': i}}
+        if not isinstance(buggy_files, dict):
+            return None
+        # Check a sample item if exists
+        if buggy_files:
+            sample = next(iter(buggy_files.values()))
+            if not isinstance(sample, dict):
+                print(f"  ⚠ Stale SZZ cache format detected for {os.path.basename(repo_path)} - ignoring.")
+                return None
+
         print(f"  SZZ: loaded from cache ({len(buggy_files)} buggy files)")
         return buggy_files
     except Exception:
@@ -355,14 +309,14 @@ def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_d
                        Balanced to reduce false positives while keeping real bugs.
 
     Returns:
-        dict: {file_path: confidence_weight} for buggy files
+        dict: {file_path: {'confidence': float, 'bug_count': int}}
     """
 
     cached = _load_szz_cache(repo_path, cache_dir)
     if cached is not None:
         return cached
 
-    buggy_files = {}  # dict with confidence weights
+    buggy_files = {}  # dict with {'confidence': float, 'bug_count': int}
     buggy_messages = {} # dict of {fp_norm: set([commit.msg])}
 
     fix_commits = 0
@@ -385,7 +339,7 @@ def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_d
     from datetime import timedelta
     cutoff_date = repo_latest_date - timedelta(days=label_window_days)
     
-    print(f"  SZZ v2.6 (churn-weighted): Using {label_window_days}-day window, min_confidence={min_confidence:.1%}, min_churn=5%")
+    print(f"  SZZ v2.6 (churn-weighted): Using {label_window_days}-day window, min_confidence={min_confidence:.1%}, min_churn={SZZ_MIN_CHURN_RATIO:.1%}")
     print(f"  Cutoff date: {cutoff_date.strftime('%Y-%m-%d')}")
 
     for commit in all_commits:
@@ -443,13 +397,24 @@ def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_d
                 skipped_trivial_changes += 1
                 continue
 
-            # FILE-LEVEL SZZ MAPPING with confidence
+            # STAGE 1 REDESIGN: Use blame to find bug-introducing commits
+            try:
+                bug_intro_commits = git_wrapper.get_commits_last_modified_lines(commit, file)
+            except Exception:
+                bug_intro_commits = {}
+
+            if not bug_intro_commits:
+                continue
+
+            # We found bug introducing commits. The file is definitely buggy.
+            # FILE-LEVEL SZZ MAPPING with confidence and counts
             if fp_norm not in buggy_files:
-                buggy_files[fp_norm] = commit_confidence
+                buggy_files[fp_norm] = {'confidence': commit_confidence, 'bug_count': 1}
                 buggy_messages[fp_norm] = set()
             else:
                 # Take maximum confidence across all bug-fix commits
-                buggy_files[fp_norm] = max(buggy_files[fp_norm], commit_confidence)
+                buggy_files[fp_norm]['confidence'] = max(buggy_files[fp_norm]['confidence'], commit_confidence)
+                buggy_files[fp_norm]['bug_count'] += 1
             buggy_messages[fp_norm].add(commit.msg)
             blame_hits += 1
 
@@ -459,7 +424,7 @@ def extract_bug_labels_with_confidence(repo_path, cache_dir=None, label_window_d
         f"{skipped_large_commits} large, "
         f"{skipped_merge_commits} merge, "
         f"{skipped_low_confidence} low-conf, "
-        f"{skipped_trivial_changes} trivial <5% churn) -> "
+        f"{skipped_trivial_changes} trivial <{SZZ_MIN_CHURN_RATIO:.1%} churn) -> "
         f"{len(buggy_files)} buggy files"
     )
 

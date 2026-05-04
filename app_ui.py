@@ -48,6 +48,158 @@ from backend.labeling import create_labels
 from backend.predict import predict
 from backend.train import load_model_version
 from backend.explainer import _compute_shap, _get_features, NON_FEATURE_COLS
+
+
+# Helper functions for comprehensive insights
+def _get_riskiest_modules(files_data):
+    """Identify riskiest modules/directories from file paths."""
+    module_risks = {}
+    
+    for file_data in files_data:
+        filepath = file_data.get("file", "")
+        if filepath:
+            # Extract directory/module name
+            parts = filepath.replace("\\", "/").split("/")
+            if len(parts) > 1:
+                module = parts[0]  # Top-level directory
+                risk = file_data.get("risk", 0)
+                
+                if module not in module_risks:
+                    module_risks[module] = {"files": [], "total_risk": 0, "file_count": 0}
+                
+                module_risks[module]["files"].append({
+                    "filename": os.path.basename(filepath),
+                    "risk": risk
+                })
+                module_risks[module]["total_risk"] += risk
+                module_risks[module]["file_count"] += 1
+    
+    # Calculate average risk and sort
+    riskiest_modules = []
+    for module, data in module_risks.items():
+        avg_risk = data["total_risk"] / data["file_count"]
+        riskiest_modules.append({
+            "module": module,
+            "file_count": data["file_count"],
+            "average_risk": round(avg_risk, 3),
+            "total_risk": round(data["total_risk"], 3),
+            "top_files": sorted(data["files"], key=lambda x: x["risk"], reverse=True)[:3]
+        })
+    
+    return sorted(riskiest_modules, key=lambda x: x["average_risk"], reverse=True)[:5]
+
+
+def _generate_recommendations(files_data):
+    """Generate actionable recommendations based on scan results."""
+    recommendations = []
+    
+    # High-level statistics
+    total_files = len(files_data)
+    critical_files = [f for f in files_data if f.get("risk", 0) >= 0.8]
+    high_risk_files = [f for f in files_data if f.get("risk", 0) >= 0.6]
+    
+    # Risk-based recommendations
+    if len(critical_files) > 0:
+        recommendations.append({
+            "priority": "CRITICAL",
+            "category": "Immediate Action Required",
+            "description": f"{len(critical_files)} files have critical risk scores (>80%). Review these immediately.",
+            "affected_files": [os.path.basename(f.get("file", "")) for f in critical_files[:5]]
+        })
+    
+    if len(high_risk_files) > total_files * 0.3:
+        recommendations.append({
+            "priority": "HIGH", 
+            "category": "Code Quality Concern",
+            "description": f"More than 30% of files ({len(high_risk_files)}) are high-risk. Consider code review process improvements.",
+            "affected_files": []
+        })
+    
+    # Complexity-based recommendations
+    high_complexity_files = [f for f in files_data if f.get("max_complexity", 0) > 15]
+    if len(high_complexity_files) > 0:
+        recommendations.append({
+            "priority": "MEDIUM",
+            "category": "Complexity Reduction",
+            "description": f"{len(high_complexity_files)} files have high complexity (>15). Consider refactoring.",
+            "affected_files": [os.path.basename(f.get("file", "")) for f in high_complexity_files[:3]]
+        })
+    
+    # Churn-based recommendations
+    high_churn_files = []
+    for f in files_data:
+        loc = f.get("loc", 1)
+        churn = (f.get("lines_added", 0) + f.get("lines_deleted", 0)) / loc if loc > 0 else 0
+        if churn > 0.5:  # More than 50% of file changed
+            high_churn_files.append(f)
+    
+    if len(high_churn_files) > 0:
+        recommendations.append({
+            "priority": "MEDIUM",
+            "category": "Stability Issues",
+            "description": f"{len(high_churn_files)} files show high churn. May need stabilization.",
+            "affected_files": [os.path.basename(f.get("file", "")) for f in high_churn_files[:3]]
+        })
+    
+    # Coupling-based recommendations
+    high_coupling_files = [f for f in files_data if f.get("coupling_risk", 0) > 0.7]
+    if len(high_coupling_files) > 0:
+        recommendations.append({
+            "priority": "LOW",
+            "category": "Architectural Review",
+            "description": f"{len(high_coupling_files)} files have high coupling. Consider decoupling.",
+            "affected_files": [os.path.basename(f.get("file", "")) for f in high_coupling_files[:3]]
+        })
+    
+    return recommendations
+
+
+def _calculate_quality_indicators(files_data):
+    """Calculate overall code quality indicators."""
+    total_files = len(files_data)
+    
+    # Risk indicators
+    avg_risk = sum(f.get("risk", 0) for f in files_data) / total_files if total_files > 0 else 0
+    high_risk_ratio = len([f for f in files_data if f.get("risk", 0) >= 0.6]) / total_files if total_files > 0 else 0
+    
+    # Complexity indicators
+    avg_complexity = sum(f.get("avg_complexity", 0) for f in files_data) / total_files if total_files > 0 else 0
+    max_complexity_files = len([f for f in files_data if f.get("max_complexity", 0) > 10])
+    
+    # Activity indicators
+    total_commits = sum(f.get("commits", 0) for f in files_data)
+    avg_commits_per_file = total_commits / total_files if total_files > 0 else 0
+    
+    # Churn indicators
+    total_churn = sum((f.get("lines_added", 0) + f.get("lines_deleted", 0)) for f in files_data)
+    avg_churn_per_file = total_churn / total_files if total_files > 0 else 0
+    
+    # Quality score (0-100)
+    quality_score = max(0, 100 - (avg_risk * 50) - (high_risk_ratio * 30) - (avg_complexity * 2))
+    
+    return {
+        "overall_quality_score": round(quality_score, 1),
+        "risk_indicators": {
+            "average_risk_score": round(avg_risk, 3),
+            "high_risk_percentage": round(high_risk_ratio * 100, 1),
+            "risk_level": "High" if high_risk_ratio > 0.3 else "Medium" if high_risk_ratio > 0.1 else "Low"
+        },
+        "complexity_indicators": {
+            "average_complexity": round(avg_complexity, 2),
+            "high_complexity_files": max_complexity_files,
+            "complexity_level": "High" if avg_complexity > 8 else "Medium" if avg_complexity > 4 else "Low"
+        },
+        "activity_indicators": {
+            "total_commits": total_commits,
+            "average_commits_per_file": round(avg_commits_per_file, 1),
+            "activity_level": "High" if avg_commits_per_file > 20 else "Medium" if avg_commits_per_file > 5 else "Low"
+        },
+        "churn_indicators": {
+            "total_churn": total_churn,
+            "average_churn_per_file": round(avg_churn_per_file, 1),
+            "stability_level": "Low" if avg_churn_per_file > 100 else "Medium" if avg_churn_per_file > 20 else "High"
+        }
+    }
 from backend.commit_risk import predict_commit_risk
 from backend.config import REPOS, SZZ_CACHE_DIR, BASE_DIR, MODEL_LATEST_PATH, GIT_FEATURES_TO_NORMALIZE, TRAINING_LOG_PATH
 
@@ -249,7 +401,7 @@ def init_app_state():
             git_results    = mine_git_data(repo_path)
             df_repo = build_features(static_results, git_results)
             df_repo = create_labels(df_repo, repo_path, cache_dir=SZZ_CACHE_DIR)
-            df_repo["repo"] = repo_path
+            df_repo["repo"] = os.path.basename(repo_path)
             all_data.append(df_repo)
         except Exception:
             logger.warning(
@@ -610,8 +762,20 @@ def api_file_detail():
     if df is None or file_id not in df["file"].values:
         return jsonify({"error": "File not found"}), 404
     
-    idx = df.index[df['file'] == file_id].tolist()[0]
+    idx_list = df.index[df['file'] == file_id].tolist()
+    if not idx_list:
+        return jsonify({"error": "File not found"}), 404
+        
+    idx = idx_list[0]
     row = df.loc[idx]
+    
+    # Safely get integer position for SHAP numpy array lookup
+    pos_idx = df.index.get_loc(idx)
+    if isinstance(pos_idx, slice):
+        pos_idx = pos_idx.start
+    elif hasattr(pos_idx, '__iter__') and not isinstance(pos_idx, str):
+        import numpy as np
+        pos_idx = np.where(pos_idx)[0][0]
     
     # Use repo_path from scan or from row
     if not repo_path:
@@ -632,9 +796,9 @@ def api_file_detail():
     
     shap_data = {"positive": [], "negative": []}
     
-    if shap_vals is not None and len(shap_vals) > idx:
+    if shap_vals is not None and pos_idx < len(shap_vals):
         try:
-            sv = shap_vals[idx]
+            sv = shap_vals[pos_idx]
             if len(sv.shape) > 1 and sv.shape[1] > 1:
                 sv = sv[:, 1]
                 
@@ -970,7 +1134,7 @@ def api_scan_results(scan_id):
         
         result = scan_results[scan_id]
         
-        # Prepare file list with risk info
+        # Prepare file list with comprehensive risk info
         files = []
         for _, row in pd.DataFrame(result["files"]).iterrows():
             files.append({
@@ -978,9 +1142,32 @@ def api_scan_results(scan_id):
                 "filename": os.path.basename(str(row.get("file", ""))),
                 "risk": round(row.get("risk", 0.0), 3),
                 "buggy": int(row.get("buggy", 0)),
-                "complexity": int(row.get("avg_complexity", 0)),
-                "coupling": round(row.get("coupling_risk", 0.0), 2),
-                "temporal": round(row.get("temporal_bug_risk", 0.0), 2),
+                
+                # Git metrics for filtering and sorting
+                "commits": int(row.get("commits", 0)),
+                "lines_added": int(row.get("lines_added", 0)),
+                "lines_deleted": int(row.get("lines_deleted", 0)),
+                "days_since_last_change": int(row.get("days_since_last_change", 0)),
+                "last_change_date": str(row.get("last_change_date", "")),
+                
+                # Complexity metrics
+                "loc": int(row.get("loc", 0)),
+                "avg_complexity": float(row.get("avg_complexity", 0)),
+                "max_complexity": int(row.get("max_complexity", 0)),
+                "functions": int(row.get("functions", 0)),
+                
+                # Coupling and other risk factors
+                "coupling_risk": round(row.get("coupling_risk", 0.0), 2),
+                "max_coupling_strength": int(row.get("max_coupling_strength", 0)),
+                "coupled_file_count": int(row.get("coupled_file_count", 0)),
+                
+                # Author metrics
+                "author_count": int(row.get("author_count", 0)),
+                "minor_contributor_ratio": round(row.get("minor_contributor_ratio", 0.0), 2),
+                
+                # Language and repo info
+                "language": str(row.get("language", "unknown")),
+                "repo_id": str(row.get("repo_id", "unknown")),
             })
         
         # Sort by risk descending
@@ -990,14 +1177,15 @@ def api_scan_results(scan_id):
             "scan_id": scan_id,
             "repo_name": result["repo_name"],
             "metrics": result["metrics"],
-            "files": files[:500],  # Limit to top 500 files
-            "created_at": result["created_at"]
+            "files": files,  # Return all files (no limit)
+            "created_at": result["created_at"],
+            "total_files": len(files)
         })
 
 
 @app.route("/api/scan_results/<scan_id>/download")
 def download_scan_results(scan_id):
-    """Download scan results as CSV or JSON file."""
+    """Download comprehensive scan results with insights."""
     format_type = request.args.get("format", "json").lower()
     
     with _scan_results_lock:
@@ -1007,24 +1195,43 @@ def download_scan_results(scan_id):
         result = scan_results[scan_id]
     
     if format_type == "csv":
-        # Generate CSV
+        # Generate comprehensive CSV with insights
         import csv
         import io
+        from datetime import datetime
         
         output = io.StringIO()
         writer = csv.writer(output)
         
-        # Write header
+        # Write comprehensive header
         writer.writerow([
             "filename", "risk_score", "risk_percentage", "risk_tier",
-            "lines_of_code", "avg_complexity", "max_complexity",
-            "commits", "unique_authors", "bug_fixes"
+            "lines_of_code", "avg_complexity", "max_complexity", "functions",
+            "commits", "lines_added", "lines_deleted", "churn_ratio",
+            "days_since_last_change", "author_count", "minor_contributor_ratio",
+            "coupling_risk", "max_coupling_strength", "coupled_file_count",
+            "language", "buggy_label", "priority_score"
         ])
         
-        # Write data
-        for file_data in result["files"]:
+        # Calculate churn ratio and priority score
+        files_data = result["files"]
+        for file_data in files_data:
             risk = file_data.get("risk", 0)
             risk_tier = "Critical" if risk >= 0.8 else "High" if risk >= 0.6 else "Moderate" if risk >= 0.4 else "Low"
+            
+            # Calculate churn ratio
+            loc = file_data.get("loc", 1)
+            lines_added = file_data.get("lines_added", 0)
+            lines_deleted = file_data.get("lines_deleted", 0)
+            churn_ratio = (lines_added + lines_deleted) / loc if loc > 0 else 0
+            
+            # Priority score (weighted combination)
+            priority_score = (
+                risk * 0.4 +  # Risk weight
+                min(churn_ratio * 10, 1) * 0.3 +  # Churn weight
+                min(file_data.get("commits", 0) / 50, 1) * 0.2 +  # Commits weight
+                min(file_data.get("coupling_risk", 0), 1) * 0.1  # Coupling weight
+            )
             
             writer.writerow([
                 file_data.get("file", ""),
@@ -1034,9 +1241,53 @@ def download_scan_results(scan_id):
                 file_data.get("loc", 0),
                 round(file_data.get("avg_complexity", 0), 2),
                 file_data.get("max_complexity", 0),
+                file_data.get("functions", 0),
                 file_data.get("commits", 0),
-                file_data.get("unique_authors", 0),
-                file_data.get("bug_fixes", 0)
+                lines_added,
+                lines_deleted,
+                round(churn_ratio, 3),
+                file_data.get("days_since_last_change", 0),
+                file_data.get("author_count", 0),
+                round(file_data.get("minor_contributor_ratio", 0), 2),
+                round(file_data.get("coupling_risk", 0), 2),
+                file_data.get("max_coupling_strength", 0),
+                file_data.get("coupled_file_count", 0),
+                file_data.get("language", "unknown"),
+                file_data.get("buggy", 0),
+                round(priority_score, 3)
+            ])
+        
+        # Add insights summary at the end
+        writer.writerow([])  # Empty row
+        writer.writerow(["=== SCAN INSIGHTS ==="])
+        writer.writerow(["Repository", result["repo_name"]])
+        writer.writerow(["Scan Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+        writer.writerow(["Total Files", len(files_data)])
+        
+        # Risk distribution
+        critical_count = sum(1 for f in files_data if f.get("risk", 0) >= 0.8)
+        high_count = sum(1 for f in files_data if 0.6 <= f.get("risk", 0) < 0.8)
+        moderate_count = sum(1 for f in files_data if 0.4 <= f.get("risk", 0) < 0.6)
+        low_count = sum(1 for f in files_data if f.get("risk", 0) < 0.4)
+        
+        writer.writerow([])  # Empty row
+        writer.writerow(["=== RISK DISTRIBUTION ==="])
+        writer.writerow(["Critical Files", critical_count, f"{critical_count/len(files_data)*100:.1f}%"])
+        writer.writerow(["High Risk Files", high_count, f"{high_count/len(files_data)*100:.1f}%"])
+        writer.writerow(["Moderate Risk Files", moderate_count, f"{moderate_count/len(files_data)*100:.1f}%"])
+        writer.writerow(["Low Risk Files", low_count, f"{low_count/len(files_data)*100:.1f}%"])
+        
+        # Top risk files
+        writer.writerow([])  # Empty row
+        writer.writerow(["=== TOP 10 HIGH RISK FILES ==="])
+        sorted_files = sorted(files_data, key=lambda x: x.get("risk", 0), reverse=True)[:10]
+        for i, file_data in enumerate(sorted_files, 1):
+            writer.writerow([
+                f"#{i}",
+                os.path.basename(str(file_data.get("file", ""))),
+                f"{file_data.get('risk', 0)*100:.1f}%",
+                f"Commits: {file_data.get('commits', 0)}",
+                f"LOC: {file_data.get('loc', 0)}"
             ])
         
         output.seek(0)
@@ -1052,18 +1303,82 @@ def download_scan_results(scan_id):
         )
     
     else:  # JSON format (default)
-        # Prepare full export with metadata
+        # Prepare comprehensive JSON export with insights
+        from datetime import datetime
+        
+        files_data = result["files"]
+        
+        # Calculate insights
+        critical_count = sum(1 for f in files_data if f.get("risk", 0) >= 0.8)
+        high_count = sum(1 for f in files_data if 0.6 <= f.get("risk", 0) < 0.8)
+        moderate_count = sum(1 for f in files_data if 0.4 <= f.get("risk", 0) < 0.6)
+        low_count = sum(1 for f in files_data if f.get("risk", 0) < 0.4)
+        
+        # Top risk files with enhanced data
+        sorted_files = sorted(files_data, key=lambda x: x.get("risk", 0), reverse=True)[:10]
+        top_risk_files = []
+        for file_data in sorted_files:
+            # Calculate churn ratio
+            loc = file_data.get("loc", 1)
+            lines_added = file_data.get("lines_added", 0)
+            lines_deleted = file_data.get("lines_deleted", 0)
+            churn_ratio = (lines_added + lines_deleted) / loc if loc > 0 else 0
+            
+            # Priority score
+            priority_score = (
+                file_data.get("risk", 0) * 0.4 +
+                min(churn_ratio * 10, 1) * 0.3 +
+                min(file_data.get("commits", 0) / 50, 1) * 0.2 +
+                min(file_data.get("coupling_risk", 0), 1) * 0.1
+            )
+            
+            top_risk_files.append({
+                "filename": os.path.basename(str(file_data.get("file", ""))),
+                "filepath": file_data.get("file", ""),
+                "risk_score": round(file_data.get("risk", 0), 4),
+                "risk_percentage": f"{file_data.get('risk', 0)*100:.1f}%",
+                "risk_tier": "Critical" if file_data.get("risk", 0) >= 0.8 else "High" if file_data.get("risk", 0) >= 0.6 else "Moderate" if file_data.get("risk", 0) >= 0.4 else "Low",
+                "priority_score": round(priority_score, 3),
+                "commits": file_data.get("commits", 0),
+                "loc": file_data.get("loc", 0),
+                "avg_complexity": round(file_data.get("avg_complexity", 0), 2),
+                "churn_ratio": round(churn_ratio, 3),
+                "days_since_last_change": file_data.get("days_since_last_change", 0),
+                "coupling_risk": round(file_data.get("coupling_risk", 0), 2),
+                "language": file_data.get("language", "unknown")
+            })
+        
+        # Comprehensive export data
         export_data = {
-            "scan_id": scan_id,
-            "export_timestamp": time.time(),
-            "export_format": "json",
-            "repository": {
-                "name": result["repo_name"],
-                "path": result["repo_path"]
+            "scan_metadata": {
+                "scan_id": scan_id,
+                "repository": {
+                    "name": result["repo_name"],
+                    "path": result.get("repo_path", "unknown")
+                },
+                "scan_date": result["created_at"],
+                "export_timestamp": datetime.now().isoformat(),
+                "export_format": "comprehensive_json"
             },
-            "metrics": result["metrics"],
-            "files": result["files"],
-            "generated_at": result["created_at"]
+            "summary_metrics": {
+                "total_files": len(files_data),
+                "risk_distribution": {
+                    "critical": {"count": critical_count, "percentage": round(critical_count/len(files_data)*100, 1)},
+                    "high": {"count": high_count, "percentage": round(high_count/len(files_data)*100, 1)},
+                    "moderate": {"count": moderate_count, "percentage": round(moderate_count/len(files_data)*100, 1)},
+                    "low": {"count": low_count, "percentage": round(low_count/len(files_data)*100, 1)}
+                },
+                "average_risk_score": round(sum(f.get("risk", 0) for f in files_data) / len(files_data), 3),
+                "high_risk_percentage": round((critical_count + high_count) / len(files_data) * 100, 1)
+            },
+            "insights": {
+                "top_risk_files": top_risk_files,
+                "riskiest_modules": _get_riskiest_modules(files_data),
+                "recommendations": _generate_recommendations(files_data),
+                "quality_indicators": _calculate_quality_indicators(files_data)
+            },
+            "detailed_files": files_data,
+            "model_metrics": result.get("metrics", {})
         }
         
         from flask import Response
@@ -1071,7 +1386,7 @@ def download_scan_results(scan_id):
             json.dumps(export_data, indent=2, default=str),
             mimetype="application/json",
             headers={
-                "Content-Disposition": f"attachment; filename=scan_results_{result['repo_name']}_{scan_id[:8]}.json",
+                "Content-Disposition": f"attachment; filename=comprehensive_scan_{result['repo_name']}_{scan_id[:8]}.json",
                 "Content-Type": "application/json; charset=utf-8"
             }
         )
@@ -1609,12 +1924,16 @@ def create_app():
     logger.info("AI Bug Predictor Starting...")
     logger.info("=" * 50)
     
-    try:
-        init_app_state()
-    except Exception as e:
-        logger.critical("Failed to initialize backend: %s", e)
-        import sys
-        sys.exit(1)
+    def _background_init():
+        try:
+            init_app_state()
+        except Exception as e:
+            logger.critical("Failed to initialize backend: %s", e)
+
+    # Run initialization in background to prevent blocking WSGI server
+    thread = threading.Thread(target=_background_init)
+    thread.daemon = True
+    thread.start()
         
     return app
 

@@ -1,57 +1,134 @@
-# Development notes (merged documentation)
-DEVELOPMENT_NOTES.md
-CLEANUP_SUMMARY.md
-COMMIT_MESSAGE.txt
-PUSH_READY.md
-
-# Training output
-output.md
-
-# ML artifacts
-ml/models/*.pkl
-ml/plots/*.png
-ml/cache/
-ml/training_log.jsonl
-ml/benchmarks.json
-model/
-
-# Training datasets
-dataset/*/
-!dataset/README.md
-
-# Cache directories
-.cache/
-
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*.so
+*.pyo
+*.pyd
+.Python
+*.egg
 *.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# ── Virtual environments ───────────────────────────────────────────────────────
 venv/
 .venv/
-*.pyc
+env/
+ENV/
 
-# Environment
+# ── Environment variables ──────────────────────────────────────────────────────
 .env
+# Keep .env.example (template for others)
+
+# ── ML models and cache ───────────────────────────────────────────────────────
+ml/models/*.pkl
+ml/cache/
+ml/plots/
+ml/training_log.jsonl
+model/
+
+# ── Cache (old location) ──────────────────────────────────────────────────────
+.cache/
+*.pkl
+
+# ── Dataset (large repos — clone separately) ──────────────────────────────────
+dataset/
+
+# ── Documentation and markdown files ──────────────────────────────────────────
+*.md
+!README.md
+*.txt
+!requirements.txt
+*.rst
+
+# ── Temporary and analysis files ──────────────────────────────────────────────
+AUDIT_ANALYSIS.md
+CACHE_CLEANING_GUIDE.md
+COMMAND_REFERENCE.md
+COMPLETE_TRAINING_ANALYSIS.md
+COMPLETION_SUMMARY.md
+COMPREHENSIVE_PROJECT_REPORT.md
+CRITICAL_FIXES_APPLIED.md
+curr_output.md
+DEEP_DIVE_ANALYSIS.md
+detail.md
+DISPLAY_FIX_COMPLETE.txt
+DOCUMENTATION.md
+EXECUTIVE_SUMMARY.md
+FALLBACK_LABELING_EXPLAINED.md
+FINAL_DIAGNOSIS.md
+FINAL_STATUS.md
+FIXES_SUMMARY.md
+FRONTEND_COMPLETE.md
+FRONTEND_DEPLOYMENT.md
+FRONTEND_IMPLEMENTATION.md
+GEMINI.md
+GIT_COMMIT_MESSAGE.txt
+IMPROVEMENTS_APPLIED.md
+LABELING_VS_FEATURES.md
+LOW_BUG_RATES_ANALYSIS.md
+MINIMAL_FIXES_CHECKLIST.md
+PIPELINE_AUDIT_REPORT.md
+PIPELINE_FIXES_SUMMARY.md
+prompt_frontend.md
+QUICK_REFERENCE.md
+QUICK_START.md
+QUICK_VALIDATION_CHECKLIST.md
+ROOT_CAUSE_ANALYSIS.md
+ROOT_CAUSE.txt
+STAGE2_ANALYSIS.md
+SZZ_CHURN_FIX.md
+SZZ_EXPLAINED.md
+SZZ_QUICK_ANSWER.txt
+TRAINING_WITH_BOTH.md
+VISUAL_SUMMARY.txt
+VISUALIZATIONS_GUIDE.md
+
+# ── Patch and utility scripts (dev only) ──────────────────────────────────────
+patch_main.py
+patch_pipeline.py
+patch_system.py
+patch_train.py
+fix_docs.py
+final_purge.py
+clean_all.py
+clean_all_broken.py
+clean_all_caches.py
+clear_cache.py
+clear_retraining_cache.py
+analyze_filtering_results.py
+analyze_szz_mismatch.py
+comprehensive_filtering_audit.py
+investigate_fastapi.py
+validate_fixes.py
+validate_pipeline.py
+
+# ── Scratch and temp directories ──────────────────────────────────────────────
+scratch/
+docs/
+
+# ── React frontend build ───────────────────────────────────────────────────────
+react-frontend/node_modules/
+react-frontend/dist/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
+ml/training_log.jsonl
 
-# Database
-*.db
-*.sqlite
-
-# IDE
+# ── IDE ───────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+.mypy_cache/
 
-# OS
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-
-# Temporary files
-*.tmp
-*.bak
-*.backup
-temp_*/

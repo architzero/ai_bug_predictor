@@ -1,4 +1,5 @@
 import logging
+import os
 import pandas as pd
 import numpy as np
 
@@ -7,11 +8,9 @@ from backend.feature_constants import ALL_EXCLUDE_COLS
 
 logger = logging.getLogger(__name__)
 
-NON_FEATURE_COLS = [
-    "file", "buggy", "bug_fixes", "bug_density",
-    "buggy_commit", "commit_hash", "repo", "confidence",
-    "language"  # String column for CLI tool, use language_id for model
-]
+# Import from feature_constants to ensure consistency
+from backend.feature_constants import NON_FEATURE_COLS as IMPORTED_NON_FEATURE_COLS
+NON_FEATURE_COLS = IMPORTED_NON_FEATURE_COLS
 
 # Leakage columns - these are NO LONGER COMPUTED (removed from feature_builder.py)
 # Kept here for reference in case old cached data still has them
@@ -172,21 +171,49 @@ def build_features(static_results, git_results):
             "burst_ratio":            g.get("burst_ratio", 0.0),
             "burst_risk":             g.get("burst_risk", 0.0),
 
-            # temporal bug memory
-            "recent_bug_flag":        g.get("recent_bug_flag", 0),
-            "bug_recency_score":      g.get("bug_recency_score", 0.0),
-            "temporal_bug_risk":      g.get("temporal_bug_risk", 0.0),
-            "temporal_bug_memory":    g.get("temporal_bug_memory", 0.0),
+            # temporal bug memory REMOVED - these features leak target signal
+            # "recent_bug_flag":        g.get("recent_bug_flag", 0),      # REMOVED: temporal leakage
+            # "bug_recency_score":      g.get("bug_recency_score", 0.0),  # REMOVED: temporal leakage  
+            # "temporal_bug_risk":      g.get("temporal_bug_risk", 0.0),  # REMOVED: temporal leakage
+            # "temporal_bug_memory":    g.get("temporal_bug_memory", 0.0),  # REMOVED: temporal leakage
 
             # Bug history features REMOVED - they were derived from labels (data leakage)
             # These features are no longer computed to prevent circular logic
         }
+
+        # Add missing high-value features
+        
+        # 1. churn_ratio = lines_added / loc (overall churn, not just recent)
+        overall_churn_ratio = (lines_added + lines_deleted) / loc if loc > 0 else 0
+        row["churn_ratio"] = overall_churn_ratio
+        
+        # 2. author_entropy - measure of contributor diversity
+        # Using minor_contributor_ratio as proxy for entropy (higher = more diverse)
+        row["author_entropy"] = g.get("minor_contributor_ratio", 0)
+        
+        # 3. experience_score - based on author_count and commit patterns
+        # Higher experience = fewer authors with consistent commits (lower entropy)
+        author_count = g.get("author_count", 1)
+        if author_count == 1:
+            experience_score = 1.0  # Single author = high experience
+        elif author_count <= 3:
+            experience_score = 0.7  # Small team = moderate experience
+        else:
+            experience_score = 0.3  # Large team = lower average experience
+        row["experience_score"] = experience_score
+        
+        # CRITICAL FIX: Remove repo_id to prevent repository leakage
+        # Repository identifiers should NOT be used as features
+        # This prevents cross-repo bias and ensures generalization
 
         rows.append(row)
 
     df_built = pd.DataFrame(rows)
     if "language_id" in df_built.columns:
         df_built["language_id"] = df_built["language_id"].astype("category")
+    # CRITICAL FIX: Remove repo_id entirely to prevent repository leakage
+    if "repo_id" in df_built.columns:
+        df_built = df_built.drop(columns=["repo_id"])
         
     return df_built
 

@@ -7,13 +7,14 @@ to prevent inconsistencies across modules.
 
 # Columns that are NOT features (metadata, labels, predictions)
 NON_FEATURE_COLS = [
-    "file",           # File path (metadata)
+    "file",           # File path (metadata) - PREVENTS FILENAME LEAKAGE
     "buggy",          # Label (target variable)
     "bug_fixes",      # Raw git metric (not a derived feature)
     "bug_density",    # Derived from label (not a feature)
     "buggy_commit",   # SZZ metadata
     "commit_hash",    # Git metadata
-    "repo",           # Repository identifier
+    "repo",           # Repository identifier - PREVENTS REPO LEAKAGE
+    "repo_id",        # Repository ID - PREVENTS REPO LEAKAGE
     "language",       # String language name (replaced by language_id)
     "confidence",     # Label confidence weight
     "risk",           # Prediction output
@@ -24,8 +25,13 @@ NON_FEATURE_COLS = [
     "risk_per_loc",         # Derived metric (not a feature)
     "effort_priority",      # Derived metric (not a feature)
     "effort_category",      # Derived metric (not a feature)
-    "bug_type",             # Bug classification output
-    "bug_type_confidence",  # Bug classification confidence
+    "bug_type",             # Bug classification output - CRITICAL FIX: DISCARD ENTIRELY
+    "bug_type_confidence",  # Bug classification confidence - CRITICAL FIX: DISCARD ENTIRELY
+    "source",               # Label source (szz/clean)
+    "is_buggy",             # Boolean label
+    "bug_score",            # Raw bug score (must never be a feature)
+    "filename_hash",        # Filename-based features - PREVENTS FILENAME LEAKAGE
+    "path_hash",           # Path-based features - PREVENTS FILENAME LEAKAGE
 ]
 
 # Columns that are DATA LEAKAGE (derived from labels, must never be used as features)

@@ -33,13 +33,13 @@ Evaluated using **leave-one-project-out cross-validation** across 9 repositories
 
 | Metric | Value | Interpretation |
 |--------|-------|----------------|
-| **PR-AUC** | **0.940** | Elite ranking quality (>0.85 = excellent) |
-| **ROC-AUC** | **0.932** | Strong discrimination (>0.90 = strong) |
-| **F1 Score** | **0.855** | Honest benchmark (5 repos ≥30 files) |
+| **PR-AUC** | **0.701** | Good ranking quality (>0.65 = good) |
+| **ROC-AUC** | **0.700** | Moderate discrimination |
+| **F1 Score** | **0.523** | Honest benchmark (5 repos ≥30 files) |
 | **Recall@20%** | **34.0%** | Reviewing top 20% of files catches 34% of bugs |
-| **Weighted F1** | **0.745** | Realistic metric weighted by repo size |
+| **Weighted F1** | **0.440** | Realistic metric weighted by repo size |
 
-**Key Finding**: Git process metrics (commits, churn, coupling) substantially outperform static complexity metrics in isolation. Combined features achieve the highest PR-AUC (0.940).
+**Key Finding**: Git process metrics (commits, churn, coupling) substantially outperform static complexity metrics in isolation. Combined features achieve the highest PR-AUC (0.708).
 
 ---
 
@@ -237,8 +237,8 @@ The system uses **leave-one-project-out cross-validation**: the model is trained
 
 | Model | Role |
 |-------|------|
-| **Random Forest** | Primary model; best average F1 in most folds |
-| **XGBoost** | Alternative; superior probability calibration |
+| **XGBoost** | Primary model; best composite score (PR-AUC + Recall@20%) |
+| **Random Forest** | Alternative; competitive on most folds |
 | **Logistic Regression** | Baseline; strongest on some folds |
 
 Final model selected by **composite score**: `0.4 × PR-AUC + 0.4 × Recall@20% + 0.2 × F1`
@@ -271,24 +271,24 @@ Trained on **9 open-source repositories** spanning **4 programming languages**:
 
 | Repository | Language | Files | Buggy | Bug Rate | Domain |
 |------------|----------|-------|-------|----------|--------|
-| psf/requests | Python | 17 | 4 | 23.5% | HTTP client |
-| pallets/flask | Python | 23 | 20 | 87.0% | Web framework |
-| tiangolo/fastapi | Python | 47 | 23 | 48.9% | API framework |
-| encode/httpx | Python | 9 | 6 | 66.7% | HTTP client |
-| celery/celery | Python | 214 | 127 | 59.3% | Task queue |
-| sqlalchemy/sqlalchemy | Python | 236 | 171 | 72.5% | ORM |
-| expressjs/express | JavaScript | 7 | 6 | 85.7% | Web framework |
-| axios/axios | JavaScript | 70 | 48 | 68.6% | HTTP client |
-| google/guava | Java | 1,031 | 411 | 39.8% | Utility library |
-| **Total** | **4 languages** | **1,654** | **816** | **49.3%** | |
+| psf/requests | Python | 19 | 8 | 42.1% | HTTP client |
+| pallets/flask | Python | 26 | 11 | 42.3% | Web framework |
+| tiangolo/fastapi | Python | 73 | 34 | 46.6% | API framework |
+| encode/httpx | Python | 10 | 4 | 40.0% | HTTP client |
+| celery/celery | Python | 164 | 73 | 44.5% | Task queue |
+| sqlalchemy/sqlalchemy | Python | 212 | 95 | 44.8% | ORM |
+| expressjs/express | JavaScript | 9 | 4 | 44.4% | Web framework |
+| axios/axios | JavaScript | 77 | 34 | 44.2% | HTTP client |
+| google/guava | Java | 1,407 | 633 | 45.0% | Utility library |
+| **Total** | **4 languages** | **1,997** | **896** | **44.9%** | |
 
 ### Cross-Language Generalization
 
 The **Guava fold (Java)** is the most significant evaluation result. The model was trained exclusively on Python and JavaScript repositories with **zero Java examples**, yet achieved:
 
-- F1 = 0.742
-- PR-AUC = 0.801
-- 1,031 Java files analyzed
+- F1 = 0.404
+- PR-AUC = 0.697
+- 1,407 Java files analyzed
 
 This demonstrates that **process metrics** (commit frequency, author count, file instability, coupling) carry bug-predictive signal **independent of programming language**.
 

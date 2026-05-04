@@ -244,9 +244,10 @@ def mine_git_data(repo_path, use_checkpoint=True, use_cache=True):
                         fp_norm = _norm_path(file.old_path)
                         if not is_test_file(fp_norm) and not is_generated_file(fp_norm):
                             if fp_norm not in szz_buggy_files:
-                                szz_buggy_files[fp_norm] = commit_confidence
+                                szz_buggy_files[fp_norm] = {'confidence': commit_confidence, 'bug_count': 1}
                             else:
-                                szz_buggy_files[fp_norm] = max(szz_buggy_files[fp_norm], commit_confidence)
+                                szz_buggy_files[fp_norm]['confidence'] = max(szz_buggy_files[fp_norm]['confidence'], commit_confidence)
+                                szz_buggy_files[fp_norm]['bug_count'] += 1
                             szz_buggy_messages[fp_norm].add(commit.msg)
 
             commit_time = commit.committer_date

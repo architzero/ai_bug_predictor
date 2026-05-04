@@ -13,7 +13,7 @@ MINER_CACHE_DIR = os.path.join(CACHE_DIR, "miner")
 SZZ_CACHE_DIR   = os.path.join(CACHE_DIR, "szz")
 
 # ── Cache versioning ───────────────────────────────────────────────────────────
-CACHE_VERSION = "v14"  # Incremented for SZZ v2.6 with relaxed thresholds (5% churn, 35% confidence, 24 months)
+CACHE_VERSION = "v16"  # Overhauled metadata format: {'confidence': float, 'bug_count': int}
 
 # ── Model versioning ───────────────────────────────────────────────────────────
 MODEL_VERSION = "v1"
@@ -34,26 +34,76 @@ REPOS = [
     os.path.join(DATASET_DIR, "guava"),
 ]
 
-# ── Skip Patterns ──────────────────────────────────────────────────────────────
-# Skip directories that contain non-production code or generated files
-SKIP_DIR_PATTERNS = [
-    # Dependencies & build artifacts
-    "node_modules", "vendor", "dist", "build",
-    # Virtual environments
-    ".venv", "venv", "env", "__pycache__",
-    # Generated & coverage
-    "coverage", "__generated__", ".pytest_cache", ".mypy_cache",
+# ── 3-LAYER FILTERING SYSTEM ────────────────────────────────────────────────────
+
+# 🔹 LAYER 1: EXTENSION FILTER (COARSE FILTER)
+ALLOWED_EXTENSIONS = {
+    # Python
+    ".py",
+    
+    # JavaScript / frontend/backend
+    ".js", ".jsx", ".ts", ".tsx",
+    
+    # Java
+    ".java",
+    
+    # Web / frontend
+    ".html", ".css",
+    
+    # Configs (important ones only)
+    ".json", ".yaml", ".yml"
+}
+
+EXCLUDED_EXTENSIONS = {
+    ".md", ".txt", ".rst", ".log", ".csv",
+    ".png", ".jpg", ".jpeg", ".svg",
+    ".pdf"
+}
+
+# 🔹 LAYER 2: DIRECTORY INTELLIGENCE
+EXCLUDED_DIRS = {
+    # Test directories
+    "test", "tests", "testing", "__tests__", "spec", "specs", "t",
+    # Documentation
+    "docs", "documentation", "docs_src",
+    # Build artifacts
+    "build", "dist", "out",
     # Version control
-    ".git", ".github", ".husky", ".gitlab",
-    # Test directories (test files in main code are filtered by name pattern)
-    "tests", "test", "__tests__", "spec",
-    # Documentation & examples (not production code)
-    "docs", "docs_src", "documentation", "examples", "example",
-    # Scripts & migrations (utility code, not core logic)
-    "scripts", "migrations",
-    # Guava Android variant (duplicate of guava/src/)
-    "android",
+    ".git", ".github",
+    # Dependencies
+    "node_modules", "__pycache__", "coverage",
+    # Static assets
+    "static", "assets", "public", "vendor",
+    # Examples and demos (CRITICAL: prevents noisy training data)
+    "examples", "example", "sample", "samples",
+    "demo", "demos", "benchmarks",
+    # Virtual environments
+    ".venv", "venv", "env",
+    # Migrations (often auto-generated)
+    "migrations"
+}
+
+CORE_DIRS = {
+    "src", "lib", "app", "backend", "frontend", "api", "routers", "services", "db", "models", "database", "utils", "middleware", "controllers",
+    # Add semantic directories often missed in large repos
+    "routing", "dependencies", "security", "schemas", "endpoints", "views", "handlers"
+}
+
+# Conditional directories (need intelligence) - MORE INCLUSIVE
+CONDITIONAL_DIRS = {
+    "scripts", "config", "migrations"  # Allow with intelligent filtering
+}
+
+# Framework infrastructure keywords (research-clean approach)
+FRAMEWORK_KEYWORDS = [
+    "middleware", "routing", "security",
+    "dependency", "template", "templating", "websocket",
+    "openapi", "static", "auth"
 ]
+
+# Legacy compatibility
+SKIP_DIR_PATTERNS = EXCLUDED_DIRS  # Now excludes only truly non-code directories
+ALWAYS_INCLUDE_DIRS = CORE_DIRS
 
 SKIP_FILE_PATTERNS = [
     ".min.js", ".min.css",
@@ -78,9 +128,10 @@ GIT_FEATURES_TO_NORMALIZE = [
     "commits", "lines_added", "lines_deleted",
     "commits_2w", "commits_1m", "commits_3m",
     "recent_churn_ratio", "recent_activity_score",
-    "instability_score", "avg_commit_size",
+    "instability_score", "avg_commit_score",
     "max_commit_ratio", "max_added",
     "author_count", "minor_contributor_ratio",
+    "churn_ratio", "author_entropy", "experience_score",
 ]
 
 # ── Model training ─────────────────────────────────────────────────────────────
@@ -97,10 +148,10 @@ RISK_THRESHOLD = 0.50
 DEFECT_DENSITY_TOP_K = 0.20
 
 # ── SZZ Algorithm Parameters ───────────────────────────────────────────────────
-SZZ_MIN_CHURN_RATIO = 0.05  # 5% of file must change to be labeled buggy
-SZZ_MAX_FILES_PER_COMMIT = 15  # Skip commits touching >15 files (tangled commits)
-SZZ_MIN_CONFIDENCE = 0.35  # 35% minimum confidence threshold
-SZZ_LABEL_WINDOW_DAYS = 730  # 2 years (only label recent bug fixes)
+SZZ_MIN_CHURN_RATIO = 0.01  # 1% of file must change to be labeled buggy (more inclusive)
+SZZ_MAX_FILES_PER_COMMIT = 20  # Skip commits touching >20 files (allow larger refactor commits)
+SZZ_MIN_CONFIDENCE = 0.4  # 40% minimum confidence threshold (balanced for 'fix' keywords)
+SZZ_LABEL_WINDOW_DAYS = 2555  # 7 years (essential for mature repositories)
 
 # ── Explainability ─────────────────────────────────────────────────────────────
 TOP_LOCAL_PLOTS = 5

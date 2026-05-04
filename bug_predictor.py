@@ -136,7 +136,7 @@ def run(repo_input):
         print(f"   Risk scores may cluster - focus on TIER rankings for prioritization.")
     
     df = create_labels(df, repo_path, cache_dir=SZZ_CACHE_DIR)
-    df["repo"] = repo_path
+    df["repo"] = os.path.basename(repo_path)
     # NOTE: Do NOT call filter_correlated_features() here!
     # The model was trained with a fixed feature set.
     # Correlation filtering at inference time causes feature mismatch.
