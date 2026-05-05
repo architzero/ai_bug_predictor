@@ -25,9 +25,9 @@
             <div>
                 <h2 class="text-2xl font-bold mb-2">Model Trust & Reliability</h2>
                 <p class="text-indigo-100 text-lg">
-                    Our model achieves <strong>PR-AUC 0.939</strong> (elite-level ranking quality), 
-                    <strong>F1 Score 0.808</strong>, and successfully generalizes across programming languages. 
-                    All metrics are validated using cross-project leave-one-out methodology to prevent data leakage.
+                    Our model achieves <strong>PR-AUC 0.708</strong> (good ranking quality) on completely unseen repositories, 
+                    <strong>F1 Score 0.523</strong>, and successfully generalizes across programming languages including Java 
+                    with zero Java training examples. All metrics use leave-one-project-out cross-validation — the strictest possible evaluation.
                 </p>
             </div>
         </div>
@@ -134,23 +134,23 @@
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div class="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                 <dt class="text-sm font-medium text-gray-500">PR-AUC</dt>
-                <dd class="mt-1 text-3xl font-bold text-indigo-600">0.939</dd>
-                <p class="text-xs text-gray-500 mt-1">Elite ranking quality (>0.85 = excellent)</p>
+                <dd class="mt-1 text-3xl font-bold text-indigo-600">0.708</dd>
+                <p class="text-xs text-gray-500 mt-1">Good ranking quality (>0.65 = good)</p>
             </div>
             <div class="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                <dt class="text-sm font-medium text-gray-500">Weighted F1</dt>
-                <dd class="mt-1 text-3xl font-bold text-green-600">0.808</dd>
-                <p class="text-xs text-gray-500 mt-1">Strong performance (>0.80)</p>
+                <dt class="text-sm font-medium text-gray-500">Honest F1</dt>
+                <dd class="mt-1 text-3xl font-bold text-green-600">0.523</dd>
+                <p class="text-xs text-gray-500 mt-1">5 repos ≥30 files (reliable benchmark)</p>
             </div>
             <div class="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                 <dt class="text-sm font-medium text-gray-500">ROC-AUC</dt>
-                <dd class="mt-1 text-3xl font-bold text-blue-600">0.929</dd>
-                <p class="text-xs text-gray-500 mt-1">Excellent discrimination (>0.90)</p>
+                <dd class="mt-1 text-3xl font-bold text-blue-600">0.700</dd>
+                <p class="text-xs text-gray-500 mt-1">Moderate discrimination</p>
             </div>
             <div class="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                 <dt class="text-sm font-medium text-gray-500">Recall@20%</dt>
-                <dd class="mt-1 text-3xl font-bold text-orange-600">33.0%</dd>
-                <p class="text-xs text-gray-500 mt-1">81% of theoretical maximum</p>
+                <dd class="mt-1 text-3xl font-bold text-orange-600">34.0%</dd>
+                <p class="text-xs text-gray-500 mt-1">72.6% of theoretical maximum</p>
             </div>
         </div>
 
@@ -159,35 +159,36 @@
             <h3 class="text-lg font-semibold text-gray-900 mb-4">Understanding the Metrics</h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                    <h4 class="font-medium text-gray-900 mb-2">PR-AUC (0.939)</h4>
+                    <h4 class="font-medium text-gray-900 mb-2">PR-AUC (0.708)</h4>
                     <p class="text-sm text-gray-600">
-                        Precision-Recall Area Under Curve measures ranking quality. At 0.939, the model 
-                        <strong>elite-level</strong> at ordering files by risk. This is the most important metric 
+                        Precision-Recall Area Under Curve measures ranking quality. At 0.708, the model is 
+                        <strong>good</strong> at ordering files by risk. This is the most important metric 
                         for defect prediction since we care about ranking files correctly, not just raw accuracy.
+                        Evaluated using leave-one-project-out — the strictest possible methodology.
                     </p>
                 </div>
                 <div>
-                    <h4 class="font-medium text-gray-900 mb-2">Recall@20% (33.0%)</h4>
+                    <h4 class="font-medium text-gray-900 mb-2">Recall@20% (34.0%)</h4>
                     <p class="text-sm text-gray-600">
-                        When you review the top 20% highest-risk files, you catch 33% of all bugs. 
-                        Given our training data has 49.3% buggy files (high base rate), this achieves 
-                        <strong>81% of the theoretical maximum</strong> possible recall.
+                        When you review the top 20% highest-risk files, you catch 34% of all bugs. 
+                        Given our training data has 44.7% buggy files, this achieves 
+                        <strong>72.6% of the theoretical maximum</strong> possible recall.
                     </p>
                 </div>
                 <div>
-                    <h4 class="font-medium text-gray-900 mb-2">Brier Score (0.159)</h4>
+                    <h4 class="font-medium text-gray-900 mb-2">Brier Score (0.070)</h4>
                     <p class="text-sm text-gray-600">
-                        Measures calibration - how well predicted probabilities match actual outcomes. 
-                        A score of 0.159 with <strong>0.000 alignment gap</strong> means when we say "80% risk", 
-                        the file actually has an 80% chance of being buggy.
+                        Measures calibration — how well predicted probabilities match actual outcomes. 
+                        A score of 0.070 with <strong>&lt;0.1% calibration gap</strong> means when we say "80% risk", 
+                        the file genuinely has ~80% probability of being buggy.
                     </p>
                 </div>
                 <div>
                     <h4 class="font-medium text-gray-900 mb-2">Cross-Language Validation</h4>
                     <p class="text-sm text-gray-600">
-                        Model trained on Python/JavaScript achieves F1=0.762 on Java (Guava) without 
-                        retraining. This proves <strong>genuine generalization</strong> across languages, 
-                        not just memorization of patterns.
+                        Model trained on Python/JavaScript achieves F1=0.404 and PR-AUC=0.697 on Java (Guava, 1,407 files) without 
+                        retraining. This proves <strong>genuine generalization</strong> across languages — 
+                        process metrics are language-agnostic.
                     </p>
                 </div>
             </div>
@@ -512,11 +513,11 @@
         <h3 class="font-semibold text-green-900 mb-2">The Honest Summary</h3>
         <p class="text-sm text-green-800">
             <strong>Will this model catch every bug? No.</strong> But will it help you find the files most likely to contain bugs 
-            or require careful review? <strong>Yes, with 93.9% ranking quality (PR-AUC).</strong> 
+            or require careful review? <strong>Yes, with 70.8% ranking quality (PR-AUC).</strong> 
             <br><br>
             The limitations are real but bounded. The model doesn't need perfect labels to learn that complex, 
-            frequently-changed files are risky—it just needs the <strong>statistical tendency</strong> to hold, which it does. 
-            The 0.939 PR-AUC across 9 diverse repositories proves the signal is real, not noise.
+            frequently-changed files are risky — it just needs the <strong>statistical tendency</strong> to hold, which it does. 
+            The 0.708 PR-AUC across 9 diverse repositories using leave-one-project-out validation proves the signal is real.
             <br><br>
             <strong>Trust the model for what it's good at:</strong> identifying high-risk files for prioritization. 
             <strong>Don't trust it for:</strong> absolute certainty about any single file, especially those with sparse history.

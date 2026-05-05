@@ -481,11 +481,8 @@ def init_app_state():
     logger.info("Backend initialized successfully — %d repos loaded.", len(all_data))
 
 
-# Initialize state on server start.
-# Graceful degradation is intentional: the server must remain reachable for
-# OAuth and ad-hoc scans even when the trained model is not yet present.
-# Unexpected crashes inside init_app_state are logged at ERROR with a full
-# traceback so they are easy to diagnose without killing the server.
+# NOTE: init_app_state() is called ONLY inside create_app() on a background
+# thread. Do NOT call it at module level — that causes a double-init race.
 
 
 @app.route("/")
@@ -497,7 +494,9 @@ def index():
         "csrf_token": generate_csrf_token()
     }
     github_oauth_enabled = bool(github_client_id and github_client_secret)
-    return render_template("index.html", auth=auth_state, github_oauth_enabled=github_oauth_enabled, csrf_token=generate_csrf_token())
+    return render_template("index.html", auth=auth_state,
+                           github_oauth_enabled=github_oauth_enabled,
+                           csrf_token=generate_csrf_token())
 
 # ── Authentication Routes ──
 @app.route("/auth/github/login")
@@ -1829,6 +1828,43 @@ def api_importance():
 
 
 
+@app.route("/api/recent_scans")
+def api_recent_scans():
+    """Return recent scans as JSON for the landing page."""
+    try:
+        recent = []
+        with _scan_results_lock:
+            for sid, data in sorted(
+                scan_results.items(),
+                key=lambda x: x[1].get("created_at", 0),
+                reverse=True
+            )[:10]:
+                recent.append({
+                    "scan_id":   sid,
+                    "repo_name": data.get("repo_name", "Unknown"),
+                    "avg_risk":  round(data["metrics"].get("avg_risk", 0), 3),
+                    "files":     data["metrics"].get("files_analyzed", 0),
+                    "scan_date": time.strftime("%Y-%m-%d %H:%M", time.localtime(data.get("created_at", 0))),
+                })
+        if not recent:
+            try:
+                db_scans = get_recent_scans(limit=10)
+                for s in db_scans:
+                    recent.append({
+                        "scan_id":   s["scan_id"],
+                        "repo_name": os.path.basename(s["repo_path"]),
+                        "avg_risk":  round(s["avg_risk"] or 0, 3),
+                        "files":     s["files_analyzed"] or 0,
+                        "scan_date": s["scan_date"],
+                    })
+            except Exception:
+                pass
+        return jsonify(recent)
+    except Exception as e:
+        logger.error("Failed to fetch recent scans: %s", e)
+        return jsonify([]), 200
+
+
 @app.route("/scan/<scan_id>")
 def scan_page(scan_id):
     auth_state = {
@@ -1843,11 +1879,13 @@ def results_page(scan_id):
     auth_state = {
         "is_authenticated": "github_token" in session,
         "username": session.get("github_username", ""),
+        "avatar": session.get("github_avatar", ""),
         "csrf_token": generate_csrf_token()
     }
-    # Pass scan_id to template so frontend can fetch scan-specific results
-    return render_template("results.html", 
+    github_oauth_enabled = bool(github_client_id and github_client_secret)
+    return render_template("results.html",
         auth=auth_state,
+        github_oauth_enabled=github_oauth_enabled,
         csrf_token=generate_csrf_token(),
         scan_id=scan_id)
 
@@ -1858,9 +1896,13 @@ def dashboard():
     auth_state = {
         "is_authenticated": True,
         "username": session.get("github_username", ""),
+        "avatar": session.get("github_avatar", ""),
         "csrf_token": generate_csrf_token()
     }
-    return render_template("dashboard.html", auth=auth_state, csrf_token=generate_csrf_token())
+    github_oauth_enabled = bool(github_client_id and github_client_secret)
+    return render_template("dashboard.html", auth=auth_state,
+                           github_oauth_enabled=github_oauth_enabled,
+                           csrf_token=generate_csrf_token())
 
 @app.route("/pr-analyzer")
 def pr_analyzer():
@@ -1880,9 +1922,13 @@ def about():
     auth_state = {
         "is_authenticated": "github_token" in session,
         "username": session.get("github_username", ""),
+        "avatar": session.get("github_avatar", ""),
         "csrf_token": generate_csrf_token()
     }
-    return render_template("about.html", auth=auth_state, csrf_token=generate_csrf_token())
+    github_oauth_enabled = bool(github_client_id and github_client_secret)
+    return render_template("about.html", auth=auth_state,
+                           github_oauth_enabled=github_oauth_enabled,
+                           csrf_token=generate_csrf_token())
 
 
 

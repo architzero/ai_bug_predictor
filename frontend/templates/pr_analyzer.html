@@ -239,17 +239,14 @@
                 this.result = null;
 
                 try {
+                    const prUrl = `https://github.com/${this.owner}/${this.repo}/pull/${this.prNumber}`;
                     const response = await fetch('/api/analyze_pr', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content
                         },
-                        body: JSON.stringify({
-                            owner: this.owner,
-                            repo: this.repo,
-                            pr_number: parseInt(this.prNumber)
-                        })
+                        body: JSON.stringify({ pr_url: prUrl })
                     });
 
                     if (!response.ok) {
@@ -257,7 +254,16 @@
                         throw new Error(data.error || 'Failed to analyze PR');
                     }
 
-                    this.result = await response.json();
+                    const data = await response.json();
+                    // Attach display fields
+                    data.owner = this.owner;
+                    data.repo = this.repo;
+                    data.pr_number = this.prNumber;
+                    data.pr_title = data.pr_info?.title || '';
+                    data.overall_risk = data.risk_analysis?.overall_risk || 0;
+                    data.risk_assessment = data.risk_analysis || {};
+                    data.author_experience = data.author_experience || {};
+                    this.result = data;
                 } catch (err) {
                     this.error = err.message;
                 } finally {

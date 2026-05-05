@@ -1,86 +1,170 @@
 {% extends "base.html" %}
+{% block title %}CodeSentinel — AI Bug Predictor{% endblock %}
 
 {% block content %}
-<div class="min-h-[70vh] flex flex-col items-center justify-center">
-    <div class="text-center mb-10">
-        <h1 class="text-4xl font-extrabold text-gray-900 tracking-tight sm:text-5xl mb-4">
-            CodeSentinel
-        </h1>
-        <p class="text-xl text-gray-500 max-w-2xl mx-auto">
-            AI-powered static analysis and commit risk prediction.
+<div class="min-h-[70vh] flex flex-col items-center justify-center py-12">
+
+  <!-- Hero -->
+  <div class="text-center mb-10 max-w-2xl">
+    <h1 class="text-5xl font-extrabold text-gray-900 tracking-tight mb-4">CodeSentinel</h1>
+    <p class="text-xl text-gray-500">
+      AI-powered defect prediction using static analysis, Git history mining, and cross-project ML.
+    </p>
+  </div>
+
+  <!-- Scan form -->
+  <div class="w-full max-w-xl bg-white p-8 rounded-xl shadow-sm border border-gray-100 mb-10"
+       x-data="scanForm()">
+    <form @submit.prevent="submitScan">
+      <div class="mb-5">
+        <label for="repo-path" class="block text-sm font-medium text-gray-700 mb-2">
+          Repository URL or local path
+        </label>
+        <div class="relative">
+          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+            </svg>
+          </div>
+          <input type="text" id="repo-path" x-model="repoPath"
+                 class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                 placeholder="https://github.com/owner/repo">
+        </div>
+        <p class="mt-1.5 text-xs text-gray-400">
+          Supported: Python · JavaScript · TypeScript · Java · Go · Ruby · PHP · C# · C++ · Rust
         </p>
+        <p class="mt-1 text-sm text-red-600" x-show="error" x-text="error"></p>
+      </div>
+
+      <button type="submit"
+              :disabled="isLoading || !repoPath.trim()"
+              class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+        <span x-show="!isLoading">Scan Codebase</span>
+        <span x-show="isLoading" class="flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+          </svg>
+          Starting scan…
+        </span>
+      </button>
+    </form>
+
+    {% if github_oauth_enabled and not auth.is_authenticated %}
+    <div class="mt-5 pt-5 border-t border-gray-100">
+      <a href="/auth/github/login"
+         class="flex items-center justify-center gap-2 w-full py-2.5 px-4 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+        <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        Sign in with GitHub to scan private repos
+      </a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Recent scans -->
+  <div class="w-full max-w-3xl" x-data="recentScans()" x-init="load()">
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Recent Scans</h2>
+
+    <div x-show="loading" class="text-center py-6 text-sm text-gray-400">Loading…</div>
+
+    <div x-show="!loading && scans.length === 0" class="text-center py-6 text-sm text-gray-400">
+      No scans yet. Analyze a repository above to get started.
     </div>
 
-    <div class="w-full max-w-xl bg-white p-8 rounded-xl shadow-sm border border-gray-100" x-data="scanForm()">
-        <form @submit.prevent="submitScan">
-            <div class="mb-6">
-                <label for="repo-path" class="block text-sm font-medium text-gray-700 mb-2">
-                    Repository URL or Local Path
-                </label>
-                <div class="mt-1 relative rounded-md shadow-sm">
-                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3.293 1.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L7.586 10 5.293 7.707a1 1 0 010-1.414zM11 12a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd" />
-                        </svg>
-                    </div>
-                    <input type="text" id="repo-path" x-model="repoPath"
-                           class="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-3 border outline-none transition-colors"
-                           placeholder="https://github.com/owner/repo or /path/to/local/repo">
-                </div>
-                <p class="mt-2 text-sm text-red-600" x-show="error" x-text="error"></p>
-            </div>
-
-            <button type="submit" 
-                    :disabled="isLoading || !repoPath.trim()"
-                    class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-                <span x-show="!isLoading">Scan Codebase</span>
-                <span x-show="isLoading" class="flex items-center">
-                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Initializing...
-                </span>
-            </button>
-        </form>
+    <div x-show="!loading && scans.length > 0"
+         class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <table class="min-w-full divide-y divide-gray-100">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Repository</th>
+            <th class="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Files</th>
+            <th class="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Risk</th>
+            <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+            <th class="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <template x-for="scan in scans" :key="scan.scan_id">
+            <tr class="hover:bg-gray-50 transition-colors">
+              <td class="px-5 py-3 text-sm font-medium text-gray-900" x-text="scan.repo_name"></td>
+              <td class="px-5 py-3 text-sm text-right text-gray-600" x-text="scan.files"></td>
+              <td class="px-5 py-3 text-sm text-right font-semibold"
+                  :class="scan.avg_risk >= 0.8 ? 'text-red-600' : scan.avg_risk >= 0.6 ? 'text-orange-600' : scan.avg_risk >= 0.4 ? 'text-yellow-600' : 'text-green-600'"
+                  x-text="`${(scan.avg_risk * 100).toFixed(1)}%`"></td>
+              <td class="px-5 py-3 text-sm text-gray-500" x-text="scan.scan_date"></td>
+              <td class="px-5 py-3 text-right">
+                <a :href="`/results/${scan.scan_id}`"
+                   class="text-sm font-medium text-indigo-600 hover:text-indigo-500">View →</a>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
     </div>
+  </div>
+
 </div>
 
 <script>
-    document.addEventListener('alpine:init', () => {
-        Alpine.data('scanForm', () => ({
-            repoPath: '',
-            isLoading: false,
-            error: '',
-            
-            async submitScan() {
-                this.error = '';
-                this.isLoading = true;
-                
-                try {
-                    const response = await fetch('/api/scan_repo', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content
-                        },
-                        body: JSON.stringify({ path: this.repoPath })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (response.ok && data.success) {
-                        window.location.href = `/scan/${data.scan_id}`;
-                    } else {
-                        this.error = data.error || 'Failed to start scan.';
-                        this.isLoading = false;
-                    }
-                } catch (err) {
-                    this.error = 'Network error occurred.';
-                    this.isLoading = false;
-                }
-            }
-        }));
-    });
+  document.addEventListener('alpine:init', () => {
+    Alpine.data('scanForm', () => ({
+      repoPath: '',
+      isLoading: false,
+      error: '',
+
+      async submitScan() {
+        this.error = '';
+
+        if (!this.repoPath.trim()) return;
+
+        if (this.repoPath.startsWith('http') && !this.repoPath.includes('github.com')) {
+          this.error = 'Only GitHub repositories are supported.';
+          return;
+        }
+
+        this.isLoading = true;
+        try {
+          const res = await fetch('/api/scan_repo', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content,
+            },
+            body: JSON.stringify({ path: this.repoPath }),
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            window.location.href = `/scan/${data.scan_id}`;
+          } else {
+            this.error = data.error || 'Failed to start scan.';
+            this.isLoading = false;
+          }
+        } catch (err) {
+          this.error = 'Network error. Please try again.';
+          this.isLoading = false;
+        }
+      },
+    }));
+
+    Alpine.data('recentScans', () => ({
+      scans: [],
+      loading: true,
+
+      async load() {
+        try {
+          const res = await fetch('/api/recent_scans');
+          if (res.ok) {
+            this.scans = await res.json();
+          }
+        } catch (_) {}
+        finally {
+          this.loading = false;
+        }
+      },
+    }));
+  });
 </script>
 {% endblock %}

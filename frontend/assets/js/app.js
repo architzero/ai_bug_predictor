@@ -1,467 +1,625 @@
-// CodeSentinel Frontend JavaScript
-// Uses Alpine.js for interactivity and Chart.js for data visualization
+// ─── Feature label map ────────────────────────────────────────────────────────
+const FEATURE_LABELS = {
+  bug_recency_score:      'Bug history',
+  avg_complexity:         'Code complexity (avg)',
+  max_complexity:         'Code complexity (peak)',
+  temporal_bug_memory:    'Long-term bug memory',
+  instability_score:      'File instability',
+  commits:                'Total commit history',
+  author_count:           'Contributor count',
+  max_coupling_strength:  'Coupling strength',
+  recency_ratio:          'Recent vs. historical activity',
+  commit_burst_score:     'Commit burst activity',
+  coupling_risk:          'Coupling risk',
+  avg_params:             'Avg function parameters',
+  max_function_length:    'Longest function',
+  complexity_vs_baseline: 'Complexity vs language baseline',
+  loc_per_function:       'Avg function size',
+  lines_added:            'Lines added (lifetime)',
+  lines_deleted:          'Lines deleted (lifetime)',
+  max_added:              'Largest single addition',
+  avg_commit_size:        'Avg commit size',
+  max_commit_ratio:       'Largest commit proportion',
+  days_since_last_change: 'Days since last change',
+  coupled_file_count:     'Coupled file count',
+  coupled_recent_missing: 'Co-changed files lagging',
+  recent_commit_burst:    'Recent activity burst',
+  recent_bug_flag:        'Recent bug indicator',
+  ownership:              'Code ownership',
+  loc:                    'Lines of code',
+  burst_risk:             'Burst risk',
+  temporal_bug_risk:      'Temporal bug risk',
+  experience_score:       'Developer experience',
+  minor_contributor_ratio:'Minor contributor ratio',
+  file_age_bucket:        'File age',
+  complexity_density:     'Complexity density',
+  complexity_per_function:'Complexity per function',
+  functions:              'Function count',
+};
 
+function featureLabel(key) {
+  return FEATURE_LABELS[key] || key;
+}
+
+// ─── Risk helpers ─────────────────────────────────────────────────────────────
+function riskTier(score) {
+  if (score >= 0.8) return 'critical';
+  if (score >= 0.6) return 'high';
+  if (score >= 0.4) return 'moderate';
+  return 'low';
+}
+
+// Percentile-based tier assignment — matches backend logic exactly:
+// CRITICAL = top 10%, HIGH = 10–25%, MODERATE = 25–50%, LOW = bottom 50%
+function assignPercentileTiers(files) {
+  if (!files || files.length === 0) return files;
+  const sorted = [...files].sort((a, b) => b.risk - a.risk);
+  const n = sorted.length;
+  const criticalCutoff = Math.ceil(n * 0.10);
+  const highCutoff     = Math.ceil(n * 0.25);
+  const moderateCutoff = Math.ceil(n * 0.50);
+  sorted.forEach((f, i) => {
+    if (i < criticalCutoff)      f._tier = 'CRITICAL';
+    else if (i < highCutoff)     f._tier = 'HIGH';
+    else if (i < moderateCutoff) f._tier = 'MODERATE';
+    else                          f._tier = 'LOW';
+  });
+  // Return in original order (sorted by risk desc already)
+  return sorted;
+}
+
+function tierBadgeClass(tier) {
+  if (tier === 'CRITICAL') return 'bg-red-100 text-red-800 border border-red-200';
+  if (tier === 'HIGH')     return 'bg-orange-100 text-orange-800 border border-orange-200';
+  if (tier === 'MODERATE') return 'bg-yellow-100 text-yellow-800 border border-yellow-200';
+  return 'bg-green-100 text-green-800 border border-green-200';
+}
+
+function riskBadgeClass(score) {
+  const t = riskTier(score);
+  if (t === 'critical') return 'bg-red-100 text-red-800 border border-red-200';
+  if (t === 'high')     return 'bg-orange-100 text-orange-800 border border-orange-200';
+  if (t === 'moderate') return 'bg-yellow-100 text-yellow-800 border border-yellow-200';
+  return 'bg-green-100 text-green-800 border border-green-200';
+}
+
+function riskTextClass(score) {
+  const t = riskTier(score);
+  if (t === 'critical') return 'text-red-600';
+  if (t === 'high')     return 'text-orange-600';
+  if (t === 'moderate') return 'text-yellow-600';
+  return 'text-green-600';
+}
+
+function riskChartColor(score) {
+  const t = riskTier(score);
+  if (t === 'critical') return '#DC2626';
+  if (t === 'high')     return '#EA580C';
+  if (t === 'moderate') return '#D97706';
+  return '#16A34A';
+}
+
+// ─── SHAP explanation builder ─────────────────────────────────────────────────
+function buildExplanation(shap) {
+  const risk_factors = [];
+  const protective_factors = [];
+
+  (shap?.positive || []).forEach(item => {
+    const label = featureLabel(item.feature);
+    const val   = item.value;
+    if (val > 0.05) {
+      if (item.feature === 'bug_recency_score' || item.feature === 'temporal_bug_memory') {
+        risk_factors.push(`Strong bug history — this file has been the source of past bugs (SHAP +${val.toFixed(2)})`);
+      } else if (item.feature === 'max_complexity' || item.feature === 'avg_complexity') {
+        risk_factors.push(`High cyclomatic complexity — complex logic is error-prone (SHAP +${val.toFixed(2)})`);
+      } else if (item.feature === 'instability_score' || item.feature === 'commit_burst_score') {
+        risk_factors.push(`Frequently changed in recent commits — active churn increases risk (SHAP +${val.toFixed(2)})`);
+      } else if (item.feature === 'coupling_risk' || item.feature === 'max_coupling_strength') {
+        risk_factors.push(`High coupling — co-changes with other risky files (SHAP +${val.toFixed(2)})`);
+      } else if (item.feature === 'author_count') {
+        risk_factors.push(`Many contributors — coordination overhead increases defect probability (SHAP +${val.toFixed(2)})`);
+      } else if (item.feature === 'recent_bug_flag') {
+        risk_factors.push(`Recent bug indicator — a bug was recently fixed in this file (SHAP +${val.toFixed(2)})`);
+      } else if (item.feature === 'commits') {
+        risk_factors.push(`High commit frequency — frequently modified file (SHAP +${val.toFixed(2)})`);
+      } else if (item.feature === 'lines_added' || item.feature === 'max_added') {
+        risk_factors.push(`Large code additions — significant growth increases risk (SHAP +${val.toFixed(2)})`);
+      } else {
+        risk_factors.push(`${label} is elevated (SHAP +${val.toFixed(2)})`);
+      }
+    }
+  });
+
+  (shap?.negative || []).forEach(item => {
+    const label = featureLabel(item.feature);
+    const val   = Math.abs(item.value);
+    if (val > 0.05) {
+      if (item.feature === 'days_since_last_change') {
+        protective_factors.push(`Not recently modified — stable file reduces risk (SHAP ${item.value.toFixed(2)})`);
+      } else if (item.feature === 'ownership') {
+        protective_factors.push(`Clear code ownership — single primary author reduces coordination risk (SHAP ${item.value.toFixed(2)})`);
+      } else if (item.feature === 'experience_score') {
+        protective_factors.push(`Experienced contributors — reduces defect probability (SHAP ${item.value.toFixed(2)})`);
+      } else {
+        protective_factors.push(`${label} is low — reduces risk (SHAP ${item.value.toFixed(2)})`);
+      }
+    }
+  });
+
+  return { risk_factors, protective_factors };
+}
+
+// ─── Chart helpers ────────────────────────────────────────────────────────────
+function destroyChart(instance) {
+  if (instance) { try { instance.destroy(); } catch (_) {} }
+  return null;
+}
+
+function safeCanvas(id) {
+  const el = document.getElementById(id);
+  if (!el || el.offsetParent === null) return null;
+  return el;
+}
+
+// ─── Alpine component: resultsDashboard ──────────────────────────────────────
 function registerAlpineComponents() {
-    if (typeof Alpine === 'undefined') {
-        console.error('Alpine.js not loaded yet!');
+  if (typeof Alpine === 'undefined') return;
+
+  Alpine.data('resultsDashboard', (scanId) => ({
+    scanId,
+    files: [],
+    filteredFiles: [],
+    originalFiles: [],
+    overview: null,
+    repoName: '',
+    searchQuery: '',
+    timeFilter: 'all',
+    sortBy: 'risk',
+    selectedFileId: null,
+    selectedFileDetails: null,
+    isPanelOpen: false,
+    isLoading: true,
+    error: null,
+    _chartsInitialized: false,
+    charts: { histogram: null, cumGain: null, importance: null, recency: null, confusion: null },
+
+    async init() {
+      if (!this.scanId) {
+        this.error = 'No scan ID provided. Please start a new scan.';
+        this.isLoading = false;
         return;
-    }
-    
-    Alpine.data('resultsDashboard', (scanId) => ({
-        scanId: scanId,
-        files: [],
-        filteredFiles: [],
-        overview: null,
-        repoName: '',
-        searchQuery: '',
-        selectedFileId: null,
-        selectedFileDetails: null,
-        isPanelOpen: false,
-        maxShapValue: 1,
-        isLoading: true,
-        error: null,
-        
-        // New filtering and sorting
-        timeFilter: 'all',
-        sortBy: 'risk',
-        originalFiles: [],
+      }
 
-        charts: {
-            riskHistogram: null,
-            featureImportance: null,
-            confusionMatrix: null,
-            cumulativeGain: null,
-            riskRecency: null
-        },
-
-        async init() {
-            console.log('🚀 Initializing results dashboard with scanId:', this.scanId);
-            
-            if (!this.scanId) {
-                console.error('❌ No scan ID provided');
-                this.error = "No scan ID provided. Please start a new scan.";
-                this.isLoading = false;
-                return;
-            }
-            
-            try {
-                console.log('📡 Fetching results from:', `/api/scan_results/${this.scanId}`);
-                
-                // Fetch scan-specific results
-                const response = await fetch(`/api/scan_results/${this.scanId}`);
-                
-                console.log('📊 Response status:', response.status);
-                
-                if (!response.ok) {
-                    if (response.status === 404) {
-                        throw new Error('Scan results not found. They may have expired (results are kept for 1 hour). Try running a new scan.');
-                    }
-                    const errorText = await response.text();
-                    console.error('❌ Error response:', errorText);
-                    throw new Error(`Failed to fetch scan results: ${response.status}`);
-                }
-
-                const data = await response.json();
-                console.log('✅ Received data structure:', {
-                    hasFiles: !!data.files,
-                    fileCount: data.files?.length,
-                    hasMetrics: !!data.metrics,
-                    hasRepoName: !!data.repo_name,
-                    totalFiles: data.total_files
-                });
-                
-                if (!data.files || data.files.length === 0) {
-                    console.warn('⚠️ No files in scan results');
-                    this.error = "Scan completed but no files were found in the results.";
-                    this.isLoading = false;
-                    return;
-                }
-                
-                // Validate file data structure
-                const sampleFile = data.files[0];
-                console.log('📄 Sample file structure:', {
-                    hasId: !!sampleFile.id,
-                    hasFilename: !!sampleFile.filename,
-                    hasRisk: 'risk' in sampleFile,
-                    riskValue: sampleFile.risk,
-                    hasCommits: 'commits' in sampleFile,
-                    hasLoc: 'loc' in sampleFile
-                });
-                
-                this.overview = { metrics: data.metrics };
-                this.repoName = data.repo_name || 'Unknown Repository';
-                this.files = data.files || [];
-                this.originalFiles = [...this.files];
-                this.filteredFiles = [...this.files];
-
-                console.log(`📁 Loaded ${this.files.length} files for repo: ${this.repoName}`);
-
-                // Initialize filters and sorting
-                this.applyFilters();
-
-                // Setup charts after DOM is updated and transition completes
-                this.$nextTick(() => {
-                    console.log('⏰ $nextTick fired, waiting for transition...');
-                    // Delay chart creation to ensure Alpine x-show transition is complete
-                    setTimeout(() => {
-                        console.log('📈 Initializing charts after transition delay...');
-                        this.initCharts();
-                    }, 350);
-                });
-
-                // Set up search watcher
-                this.$watch('searchQuery', () => {
-                    this.applyFilters();
-                });
-
-            } catch (error) {
-                console.error("💥 Dashboard initialization failed:", error);
-                this.error = error.message;
-            } finally {
-                this.isLoading = false;
-                console.log('🏁 Initialization complete. Error:', this.error, 'Files:', this.files.length);
-            }
-        },
-
-        get highRiskCount() {
-            if (!this.files) return 0;
-            return this.files.filter(f => f.risk >= 0.8).length;
-        },
-
-        getRiskBadgeClass(risk) {
-            if (risk >= 0.8) return 'bg-red-100 text-red-800 border border-red-200';
-            if (risk >= 0.6) return 'bg-orange-100 text-orange-800 border border-orange-200';
-            if (risk >= 0.4) return 'bg-yellow-100 text-yellow-800 border border-yellow-200';
-            return 'bg-green-100 text-green-800 border border-green-200';
-        },
-
-        getTextColor(risk) {
-            if (risk >= 0.8) return 'text-red-600';
-            if (risk >= 0.6) return 'text-orange-600';
-            if (risk >= 0.4) return 'text-yellow-600';
-            return 'text-green-600';
-        },
-
-        async selectFile(fileId) {
-            this.selectedFileId = fileId;
-            this.selectedFileDetails = null; // show loading state
-            this.isPanelOpen = true;
-
-            try {
-                console.log('Fetching file details for:', fileId, 'scanId:', this.scanId);
-                const response = await fetch(`/api/file?id=${encodeURIComponent(fileId)}&scan_id=${encodeURIComponent(this.scanId)}`);
-                
-                if (!response.ok) {
-                    const errorData = await response.text();
-                    console.error('File API error:', response.status, errorData);
-                    throw new Error('Failed to fetch file details');
-                }
-                
-                const details = await response.json();
-                console.log('File details received:', details);
-                this.selectedFileDetails = details;
-
-                // Calculate max SHAP value for scaling bars
-                const allShaps = [
-                    ...(details.shap?.positive || []).map(s => s.value),
-                    ...(details.shap?.negative || []).map(s => Math.abs(s.value))
-                ];
-                this.maxShapValue = allShaps.length ? Math.max(...allShaps) : 1;
-                console.log('SHAP values found:', allShaps.length, 'maxShapValue:', this.maxShapValue);
-
-            } catch (error) {
-                console.error("Failed to fetch file details:", error);
-                this.selectedFileDetails = {
-                    filepath: 'Error loading file details: ' + error.message,
-                    risk: 0,
-                    shap: { positive: [], negative: [] },
-                    top_funcs: []
-                };
-            }
-        },
-
-        generateHistogram() {
-            // Generate histogram from files data
-            if (!this.files || this.files.length === 0) return [];
-            
-            const bins = Array(20).fill(0);
-            this.files.forEach(file => {
-                const binIndex = Math.min(Math.floor(file.risk * 20), 19);
-                bins[binIndex]++;
-            });
-            
-            return bins.map((count, i) => ({
-                bin: `${(i * 0.05).toFixed(2)}-${((i + 1) * 0.05).toFixed(2)}`,
-                count: count
-            })).filter(d => d.count > 0);
-        },
-
-        initCharts() {
-            console.log('initCharts called, files count:', this.files?.length);
-            
-            // Prevent multiple initializations
-            if (this._chartsInitialized) {
-                console.log('Charts already initialized, skipping');
-                return;
-            }
-            
-            if (!this.files || this.files.length === 0) {
-                console.warn('No files to chart');
-                return;
-            }
-            
-            this._chartsInitialized = true;
-
-            // 1. Risk Histogram
-            const histCtx = document.getElementById('riskHistogram');
-            const histogramData = this.generateHistogram();
-            
-            if (histCtx && histogramData.length > 0 && histCtx.offsetParent !== null) {
-                if (this.charts.riskHistogram) this.charts.riskHistogram.destroy();
-                this.charts.riskHistogram = new Chart(histCtx, {
-                    type: 'bar',
-                    data: {
-                        labels: histogramData.map(d => d.bin),
-                        datasets: [{
-                            label: 'Files',
-                            data: histogramData.map(d => d.count),
-                            backgroundColor: histogramData.map(d => {
-                                const mid = parseFloat(d.bin.split('-')[0]) + 0.025;
-                                if (mid >= 0.8) return '#DC2626';
-                                if (mid >= 0.6) return '#EA580C';
-                                if (mid >= 0.4) return '#D97706';
-                                return '#16A34A';
-                            }),
-                            borderRadius: 4
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
-                        scales: {
-                            y: { beginAtZero: true, grid: { borderDash: [2, 4] } },
-                            x: { grid: { display: false } }
-                        }
-                    }
-                });
-                console.log('✅ Risk histogram chart created');
-            
-            // 3. Global Feature Importance — fetch real SHAP data from API, fall back to risk tiers
-            const featCtx = document.getElementById('featureImportanceChart');
-            if (featCtx && featCtx.offsetParent !== null) {
-                if (this.charts.featureImportance) this.charts.featureImportance.destroy();
-
-                const buildRiskTierChart = () => {
-                    const critical = this.files.filter(f => f.risk >= 0.8).length;
-                    const high     = this.files.filter(f => f.risk >= 0.6 && f.risk < 0.8).length;
-                    const moderate = this.files.filter(f => f.risk >= 0.4 && f.risk < 0.6).length;
-                    const low      = this.files.filter(f => f.risk < 0.4).length;
-                    this.charts.featureImportance = new Chart(featCtx, {
-                        type: 'bar',
-                        data: {
-                            labels: ['Critical (≥80%)', 'High (60-80%)', 'Moderate (40-60%)', 'Low (<40%)'],
-                            datasets: [{ label: 'Files', data: [critical, high, moderate, low],
-                                backgroundColor: ['#DC2626', '#EA580C', '#D97706', '#16A34A'], borderRadius: 4 }]
-                        },
-                        options: {
-                            indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-                            plugins: { legend: { display: false }, title: { display: true, text: 'Risk Tier Distribution', font: { size: 11 } } },
-                            scales: { x: { beginAtZero: true, grid: { borderDash: [2, 4] } }, y: { grid: { display: false } } }
-                        }
-                    });
-                    console.log('✅ Risk tier distribution chart created (SHAP fallback)');
-                };
-
-                fetch('/api/importance')
-                    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-                    .then(data => {
-                        if (!Array.isArray(data) || data.length === 0) throw new Error('empty');
-                        this.charts.featureImportance = new Chart(featCtx, {
-                            type: 'bar',
-                            data: {
-                                labels: data.map(d => d.feature),
-                                datasets: [{ label: 'Mean |SHAP|', data: data.map(d => d.value), backgroundColor: '#4F46E5', borderRadius: 4 }]
-                            },
-                            options: {
-                                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-                                plugins: { legend: { display: false } },
-                                scales: {
-                                    x: { beginAtZero: true, grid: { borderDash: [2, 4] }, title: { display: true, text: 'Mean |SHAP Value|' } },
-                                    y: { grid: { display: false } }
-                                }
-                            }
-                        });
-                        console.log('✅ SHAP feature importance chart created from API');
-                    })
-                    .catch(() => buildRiskTierChart());
-            }
-
-            // 4. Risk vs Recency Scatter Plot
-            const rrCtx = document.getElementById('riskRecencyChart');
-            if (rrCtx && rrCtx.offsetParent !== null) {
-                if (this.charts.riskRecency) this.charts.riskRecency.destroy();
-                this.charts.riskRecency = new Chart(rrCtx, {
-                    type: 'scatter',
-                    data: {
-                        datasets: [{
-                            label: 'Files',
-                            data: this.generateRiskRecencyData(),
-                            backgroundColor: 'rgba(79, 70, 229, 0.6)',
-                            borderColor: '#4F46E5',
-                            borderWidth: 1,
-                            pointRadius: 4,
-                            pointHoverRadius: 6
-                        }]
-                    },
-                    options: {
-                        responsive: true, maintainAspectRatio: false,
-                        plugins: {
-                            legend: { display: false },
-                            tooltip: { callbacks: { label: ctx => `${ctx.raw.filename}: ${ctx.raw.y.toFixed(1)}% risk, ${ctx.raw.x}d ago` } }
-                        },
-                        scales: {
-                            x: { title: { display: true, text: 'Days Since Last Change' }, grid: { borderDash: [2, 4] } },
-                            y: { title: { display: true, text: 'Risk Score (%)' }, grid: { borderDash: [2, 4] }, min: 0, max: 100 }
-                        }
-                    }
-                });
-                console.log('✅ Risk recency chart created');
-            }
-
-            // 5. Model Validation (Confusion Matrix)
-            const cmCtx = document.getElementById('confusionMatrixChart');
-            if (cmCtx && cmCtx.offsetParent !== null) {
-                if (this.charts.confusionMatrix) this.charts.confusionMatrix.destroy();
-                const hasBuggyLabels = this.files.some(f => f.buggy !== undefined && f.buggy !== null);
-                if (hasBuggyLabels) {
-                    const tp = this.files.filter(f => f.buggy === 1 && f.risk >= 0.5).length;
-                    const fp = this.files.filter(f => f.buggy === 0 && f.risk >= 0.5).length;
-                    const tn = this.files.filter(f => f.buggy === 0 && f.risk < 0.5).length;
-                    const fn = this.files.filter(f => f.buggy === 1 && f.risk < 0.5).length;
-                    this.charts.confusionMatrix = new Chart(cmCtx, {
-                        type: 'doughnut',
-                        data: {
-                            labels: ['True Positive', 'False Positive', 'True Negative', 'False Negative'],
-                            datasets: [{ data: [tp, fp, tn, fn], backgroundColor: ['#16A34A', '#EA580C', '#3B82F6', '#DC2626'], borderWidth: 0 }]
-                        },
-                        options: {
-                            responsive: true, maintainAspectRatio: false, cutout: '70%',
-                            plugins: {
-                                legend: { position: 'right', labels: { boxWidth: 12 } },
-                                tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw}` } }
-                            }
-                        }
-                    });
-                    console.log('✅ Confusion matrix chart created');
-                } else {
-                    cmCtx.parentElement.innerHTML = '<div class="h-48 flex items-center justify-center text-gray-400 text-sm text-center">Model validation unavailable<br>(no ground truth labels)</div>';
-                }
-            }
-
-            console.log('✅ All charts initialized');
-        },
-
-        // New filtering and sorting methods
-        applyFilters() {
-            let filtered = [...this.originalFiles];
-            
-            // Apply temporal filter
-            if (this.timeFilter !== 'all') {
-                const days = parseInt(this.timeFilter);
-                const cutoffDate = new Date();
-                cutoffDate.setDate(cutoffDate.getDate() - days);
-                
-                filtered = filtered.filter(file => {
-                    const lastChange = new Date(file.last_change_date || file.days_since_last_change);
-                    return lastChange >= cutoffDate;
-                });
-            }
-            
-            // Apply search filter
-            if (this.searchQuery) {
-                const query = this.searchQuery.toLowerCase();
-                filtered = filtered.filter(f => 
-                    f.filename.toLowerCase().includes(query)
-                );
-            }
-            
-            this.files = filtered;
-            this.applySorting();
-        },
-
-        applySorting() {
-            this.files.sort((a, b) => {
-                switch (this.sortBy) {
-                    case 'risk':
-                        return b.risk - a.risk;
-                    case 'commits':
-                        return (b.commits || 0) - (a.commits || 0);
-                    case 'churn':
-                        return ((b.lines_added || 0) + (b.lines_deleted || 0)) - 
-                               ((a.lines_added || 0) + (a.lines_deleted || 0));
-                    case 'recency':
-                        return (a.days_since_last_change || 0) - (b.days_since_last_change || 0);
-                    default:
-                        return b.risk - a.risk;
-                }
-            });
-            
-            this.filteredFiles = [...this.files];
-        },
-
-        // Generate cumulative gain data
-        generateCumulativeGain() {
-            if (!this.files || this.files.length === 0) return [];
-            
-            // Sort by risk descending
-            const sorted = [...this.files].sort((a, b) => b.risk - a.risk);
-            const totalBugs = sorted.filter(f => f.buggy === 1).length;
-            
-            if (totalBugs === 0) return [];
-            
-            const gainData = [];
-            let capturedBugs = 0;
-            
-            for (let i = 0; i < sorted.length; i++) {
-                if (sorted[i].buggy === 1) {
-                    capturedBugs++;
-                }
-                
-                const percentFiles = ((i + 1) / sorted.length) * 100;
-                const percentBugs = (capturedBugs / totalBugs) * 100;
-                
-                gainData.push({
-                    x: percentFiles,
-                    y: percentBugs
-                });
-            }
-            
-            return gainData;
-        },
-
-        // Generate risk vs recency data
-        generateRiskRecencyData() {
-            if (!this.files || this.files.length === 0) return [];
-            
-            return this.files.map(file => ({
-                x: file.days_since_last_change || 0,
-                y: file.risk * 100,
-                filename: file.filename
-            }));
+      try {
+        const res = await fetch(`/api/scan_results/${this.scanId}`);
+        if (!res.ok) {
+          if (res.status === 404) throw new Error('Scan results not found or expired (results kept for 1 hour). Please run a new scan.');
+          throw new Error(`Server error ${res.status}`);
         }
-    }));
+
+        const data = await res.json();
+
+        if (!data.files || data.files.length === 0) {
+          this.error = 'Scan completed but no source files were found.';
+          this.isLoading = false;
+          return;
+        }
+
+        this.overview      = { metrics: data.metrics };
+        this.repoName      = data.repo_name || 'Unknown Repository';
+        // Apply percentile-based tiers matching backend logic
+        this.originalFiles = assignPercentileTiers(data.files);
+        this.applyFilters();
+
+        this.$watch('searchQuery', () => this.applyFilters());
+
+        this.$nextTick(() => {
+          setTimeout(() => this.initCharts(), 400);
+        });
+
+      } catch (err) {
+        this.error = err.message;
+      } finally {
+        this.isLoading = false;
+      }
+    },
+
+    // ── Computed ──────────────────────────────────────────────────────────────
+    get highRiskCount() {
+      return this.originalFiles.filter(f => f._tier === 'CRITICAL' || f._tier === 'HIGH').length;
+    },
+
+    // Tier counts using percentile-based assignment (matches backend)
+    get tierCounts() {
+      return {
+        critical: this.originalFiles.filter(f => f._tier === 'CRITICAL').length,
+        high:     this.originalFiles.filter(f => f._tier === 'HIGH').length,
+        moderate: this.originalFiles.filter(f => f._tier === 'MODERATE').length,
+        low:      this.originalFiles.filter(f => f._tier === 'LOW').length,
+      };
+    },
+
+    // ── Filtering & sorting ───────────────────────────────────────────────────
+    applyFilters() {
+      let result = [...this.originalFiles];
+
+      if (this.timeFilter !== 'all') {
+        const days = parseInt(this.timeFilter);
+        result = result.filter(f => (f.days_since_last_change || 9999) <= days);
+      }
+
+      if (this.searchQuery) {
+        const q = this.searchQuery.toLowerCase();
+        result = result.filter(f => f.filename.toLowerCase().includes(q));
+      }
+
+      this.files = result;
+      this.applySorting();
+    },
+
+    applySorting() {
+      this.files.sort((a, b) => {
+        switch (this.sortBy) {
+          case 'commits': return (b.commits || 0) - (a.commits || 0);
+          case 'churn':   return ((b.lines_added || 0) + (b.lines_deleted || 0)) - ((a.lines_added || 0) + (a.lines_deleted || 0));
+          case 'recency': return (a.days_since_last_change || 9999) - (b.days_since_last_change || 9999);
+          default:        return b.risk - a.risk;
+        }
+      });
+      this.filteredFiles = [...this.files];
+    },
+
+    // ── Risk helpers exposed to template ─────────────────────────────────────
+    getRiskBadgeClass(file) {
+      // Use percentile tier if available, fall back to score-based
+      if (file && file._tier) return tierBadgeClass(file._tier);
+      return riskBadgeClass(file?.risk ?? file ?? 0);
+    },
+    getTextColor: riskTextClass,
+    getTierBadge: tierBadgeClass,
+
+    // ── File detail panel ─────────────────────────────────────────────────────
+    async selectFile(fileId) {
+      this.selectedFileId      = fileId;
+      this.selectedFileDetails = null;
+      this.isPanelOpen         = true;
+
+      try {
+        const res = await fetch(`/api/file?id=${encodeURIComponent(fileId)}&scan_id=${encodeURIComponent(this.scanId)}`);
+        if (!res.ok) throw new Error('Failed to fetch file details');
+        const details = await res.json();
+
+        // Attach tier from originalFiles
+        const fileObj = this.originalFiles.find(f => f.id === fileId);
+        details._tier = fileObj?._tier || null;
+
+        // Build human-readable explanation from SHAP values
+        details.explanation = buildExplanation(details.shap);
+
+        // Translate raw feature names to human labels in SHAP arrays
+        if (details.shap?.positive) {
+          details.shap.positive = details.shap.positive.map(s => ({ ...s, label: featureLabel(s.feature) }));
+        }
+        if (details.shap?.negative) {
+          details.shap.negative = details.shap.negative.map(s => ({ ...s, label: featureLabel(s.feature) }));
+        }
+
+        this.selectedFileDetails = details;
+      } catch (err) {
+        this.selectedFileDetails = {
+          filepath: 'Error: ' + err.message,
+          risk: 0,
+          _tier: null,
+          shap: { positive: [], negative: [] },
+          top_funcs: [],
+          explanation: { risk_factors: [], protective_factors: [] },
+        };
+      }
+    },
+
+    // ── Chart initialisation ──────────────────────────────────────────────────
+    initCharts() {
+      if (this._chartsInitialized) return;
+      if (!this.originalFiles || this.originalFiles.length === 0) return;
+      this._chartsInitialized = true;
+
+      this._buildHistogram();
+      this._buildCumulativeGain();
+      this._buildImportance();
+      this._buildRiskRecency();
+      this._buildConfusionMatrix();
+    },
+
+    _buildHistogram() {
+      const ctx = safeCanvas('riskHistogram');
+      if (!ctx) return;
+
+      // Use percentile tiers for histogram
+      const counts = {
+        CRITICAL: this.tierCounts.critical,
+        HIGH:     this.tierCounts.high,
+        MODERATE: this.tierCounts.moderate,
+        LOW:      this.tierCounts.low,
+      };
+
+      this.charts.histogram = destroyChart(this.charts.histogram);
+      this.charts.histogram = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['CRITICAL\n(top 10%)', 'HIGH\n(10–25%)', 'MODERATE\n(25–50%)', 'LOW\n(bottom 50%)'],
+          datasets: [{
+            label: 'Files',
+            data: [counts.CRITICAL, counts.HIGH, counts.MODERATE, counts.LOW],
+            backgroundColor: ['#DC2626', '#EA580C', '#D97706', '#16A34A'],
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (item) => ` ${item.raw} file${item.raw !== 1 ? 's' : ''}`,
+              },
+            },
+          },
+          scales: {
+            y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#f1f5f9' } },
+            x: { grid: { display: false } },
+          },
+        },
+      });
+    },
+
+    _buildCumulativeGain() {
+      const ctx = safeCanvas('cumulativeGainChart');
+      if (!ctx) return;
+
+      const sorted    = [...this.originalFiles].sort((a, b) => b.risk - a.risk);
+      const totalBugs = sorted.filter(f => f.buggy === 1).length;
+      const hasBuggy  = totalBugs > 0;
+
+      let captured = 0;
+      const modelPoints = sorted.map((f, i) => {
+        if (f.buggy === 1) captured++;
+        return {
+          x: +((i + 1) / sorted.length * 100).toFixed(1),
+          y: hasBuggy ? +(captured / totalBugs * 100).toFixed(1) : +((i + 1) / sorted.length * 100).toFixed(1),
+        };
+      });
+
+      const randomPoints = [{ x: 0, y: 0 }, { x: 100, y: 100 }];
+
+      this.charts.cumGain = destroyChart(this.charts.cumGain);
+      this.charts.cumGain = new Chart(ctx, {
+        type: 'line',
+        data: {
+          datasets: [
+            {
+              label: 'Model',
+              data: modelPoints,
+              borderColor: '#4F46E5',
+              backgroundColor: 'rgba(79,70,229,0.08)',
+              fill: true,
+              tension: 0.3,
+              pointRadius: 0,
+              borderWidth: 2,
+            },
+            {
+              label: 'Random baseline',
+              data: randomPoints,
+              borderColor: '#94a3b8',
+              borderDash: [5, 5],
+              pointRadius: 0,
+              borderWidth: 1.5,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                title: (items) => `Review top ${items[0].parsed.x.toFixed(0)}% of files`,
+                label: (item) => ` ${item.dataset.label}: catch ${item.parsed.y.toFixed(0)}% of bugs`,
+              },
+            },
+          },
+          scales: {
+            x: { type: 'linear', min: 0, max: 100, title: { display: true, text: '% Files Reviewed', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+            y: { min: 0, max: 100, title: { display: true, text: '% Bugs Caught', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+          },
+        },
+      });
+    },
+
+    _buildImportance() {
+      const ctx = safeCanvas('featureImportanceChart');
+      if (!ctx) return;
+
+      const buildFallback = () => {
+        const tc = this.tierCounts;
+        this.charts.importance = destroyChart(this.charts.importance);
+        this.charts.importance = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['CRITICAL (top 10%)', 'HIGH (10–25%)', 'MODERATE (25–50%)', 'LOW (bottom 50%)'],
+            datasets: [{
+              label: 'Files',
+              data: [tc.critical, tc.high, tc.moderate, tc.low],
+              backgroundColor: ['#DC2626', '#EA580C', '#D97706', '#16A34A'],
+              borderRadius: 3,
+            }],
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              title: { display: true, text: 'Risk Tier Distribution (percentile)', font: { size: 11 } },
+            },
+            scales: {
+              x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#f1f5f9' } },
+              y: { grid: { display: false } },
+            },
+          },
+        });
+      };
+
+      fetch('/api/importance')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(data => {
+          if (!Array.isArray(data) || data.length === 0) throw new Error('empty');
+          const top8 = data.slice(0, 8);
+          this.charts.importance = destroyChart(this.charts.importance);
+          this.charts.importance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: top8.map(d => featureLabel(d.feature)),
+              datasets: [{
+                label: 'Mean |SHAP|',
+                data: top8.map(d => d.value),
+                backgroundColor: '#4F46E5',
+                borderRadius: 3,
+              }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: {
+                x: { beginAtZero: true, title: { display: true, text: 'Mean |SHAP|', font: { size: 10 } }, grid: { color: '#f1f5f9' } },
+                y: { grid: { display: false }, ticks: { font: { size: 10 } } },
+              },
+            },
+          });
+        })
+        .catch(() => buildFallback());
+    },
+
+    _buildRiskRecency() {
+      const ctx = safeCanvas('riskRecencyChart');
+      if (!ctx) return;
+
+      const points = this.originalFiles
+        .filter(f => f.days_since_last_change !== undefined && f.days_since_last_change !== null)
+        .map(f => ({
+          x: f.days_since_last_change,
+          y: +(f.risk * 100).toFixed(1),
+          filename: f.filename,
+          risk: f.risk,
+        }));
+
+      if (points.length === 0) {
+        ctx.parentElement.innerHTML = '<div class="h-48 flex items-center justify-center text-gray-400 text-sm">No recency data available</div>';
+        return;
+      }
+
+      this.charts.recency = destroyChart(this.charts.recency);
+      this.charts.recency = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+          datasets: [{
+            label: 'Files',
+            data: points,
+            backgroundColor: points.map(p => riskChartColor(p.risk) + 'aa'),
+            borderColor: points.map(p => riskChartColor(p.risk)),
+            borderWidth: 1,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (item) => `${item.raw.filename}: ${item.raw.y}% risk, ${item.raw.x}d ago`,
+              },
+            },
+          },
+          scales: {
+            x: { title: { display: true, text: 'Days Since Last Change', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+            y: { min: 0, max: 100, title: { display: true, text: 'Risk Score (%)', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+          },
+        },
+      });
+    },
+
+    _buildConfusionMatrix() {
+      const ctx = safeCanvas('confusionMatrixChart');
+      if (!ctx) return;
+
+      const hasBuggy = this.originalFiles.some(f => f.buggy !== undefined && f.buggy !== null);
+      if (!hasBuggy) {
+        ctx.parentElement.innerHTML = '<div class="h-48 flex items-center justify-center text-gray-400 text-sm text-center px-4">Model validation unavailable<br>(no ground truth labels in this scan)</div>';
+        return;
+      }
+
+      const tp = this.originalFiles.filter(f => f.buggy === 1 && f.risk >= 0.5).length;
+      const fp = this.originalFiles.filter(f => f.buggy === 0 && f.risk >= 0.5).length;
+      const tn = this.originalFiles.filter(f => f.buggy === 0 && f.risk < 0.5).length;
+      const fn = this.originalFiles.filter(f => f.buggy === 1 && f.risk < 0.5).length;
+
+      const precision = tp + fp > 0 ? (tp / (tp + fp) * 100).toFixed(0) : 0;
+      const recall    = tp + fn > 0 ? (tp / (tp + fn) * 100).toFixed(0) : 0;
+
+      this.charts.confusion = destroyChart(this.charts.confusion);
+      this.charts.confusion = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: [
+            `True Positive (${tp})`,
+            `False Positive (${fp})`,
+            `True Negative (${tn})`,
+            `False Negative (${fn})`,
+          ],
+          datasets: [{
+            data: [tp, fp, tn, fn],
+            backgroundColor: ['#16A34A', '#EA580C', '#3B82F6', '#DC2626'],
+            borderWidth: 0,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+          plugins: {
+            legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } },
+            tooltip: { callbacks: { label: (item) => ` ${item.label}` } },
+          },
+        },
+        plugins: [{
+          id: 'centerText',
+          afterDraw(chart) {
+            const { ctx: c, chartArea: { left, top, right, bottom } } = chart;
+            const cx = (left + right) / 2;
+            const cy = (top + bottom) / 2;
+            c.save();
+            c.textAlign = 'center';
+            c.fillStyle = '#1e293b';
+            c.font = 'bold 14px sans-serif';
+            c.fillText(`P: ${precision}%`, cx, cy - 8);
+            c.font = '12px sans-serif';
+            c.fillStyle = '#64748b';
+            c.fillText(`R: ${recall}%`, cx, cy + 10);
+            c.restore();
+          },
+        }],
+      });
+    },
+  }));
 }
 
-// Register components when Alpine is ready
-if (typeof Alpine !== 'undefined') {
-    // Alpine already loaded, register immediately
-    document.addEventListener('alpine:init', registerAlpineComponents);
-    // Also try direct registration in case alpine:init already fired
-    if (Alpine.version) {
-        registerAlpineComponents();
-    }
-} else {
-    // Alpine not loaded yet, wait for it
-    document.addEventListener('alpine:init', registerAlpineComponents);
-}
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
+document.addEventListener('alpine:init', registerAlpineComponents);

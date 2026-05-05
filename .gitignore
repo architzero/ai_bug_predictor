@@ -132,3 +132,8 @@ ml/training_log.jsonl
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# ── Duplicate/legacy root-level directories ───────────────────────────────────
+templates/
+static/
+scratch/

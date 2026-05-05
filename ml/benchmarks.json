@@ -12,13 +12,13 @@
       "sqlalchemy",
       "guava"
     ],
-    "macro_f1": 0.5643048328771679,
-    "weighted_f1": 0.43978998990613627,
-    "pr_auc": 0.6994074824469899,
-    "roc_auc": 0.70029384894531,
-    "recall@20%": 0.30629180103383324,
-    "precision": 0.6222685985597249,
-    "recall": 0.5830623862729314
+    "macro_f1": 0.5277428666810553,
+    "weighted_f1": 0.41354005640597336,
+    "pr_auc": 0.6691744999305579,
+    "roc_auc": 0.667122818429234,
+    "recall@20%": 0.32396159757539783,
+    "precision": 0.6013219406477832,
+    "recall": 0.544336403205019
   },
   "reliable": {
     "name": "Reliable Benchmark (\u226530 files, 15-75% bug rate)",
@@ -35,12 +35,12 @@
       "flask",
       "express"
     ],
-    "honest_f1": 0.5233220511805539,
-    "honest_pr_auc": 0.7076827442407996,
-    "honest_recall@20%": 0.3399616054972635,
-    "honest_precision": 0.6131648026014922,
-    "honest_recall": 0.5204269127427302
+    "honest_f1": 0.5037355121427951,
+    "honest_pr_auc": 0.6932848553279266,
+    "honest_recall@20%": 0.3285854210902615,
+    "honest_precision": 0.6123003712891353,
+    "honest_recall": 0.5040046048075284
   },
-  "timestamp": "2026-05-04T11:56:58.734009",
+  "timestamp": "2026-05-04T22:08:48.541538",
   "note": "DO NOT CHANGE THESE NUMBERS BEFORE PRESENTATION"
 }
