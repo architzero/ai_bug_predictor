@@ -4,6 +4,7 @@ import logging
 import logging.handlers
 import joblib
 import pandas as pd
+import numpy as np
 import requests
 import uuid
 import json
@@ -662,25 +663,48 @@ def list_user_repos():
 @app.route("/api/overview")
 @cache.cached(timeout=60, query_string=True)
 def api_overview():
+    # Check if app_state is initialized
+    if app_state.get("df") is None:
+        return jsonify({
+            "metrics": app_state.get("metrics", {
+                "files_analyzed": 0,
+                "buggy_count": 0,
+                "avg_risk": 0,
+                "defect_at_20": 0.0
+            }),
+            "histogram": [],
+            "top_risk_files": [],
+            "confusion_matrix": {"tp": 0, "fp": 0, "tn": 0, "fn": 0, "has_labels": False},
+            "health_trend": [],
+            "roc_curve": {"points": [], "auc": 0, "has_labels": False},
+            "pr_curve": {"points": [], "has_labels": False},
+            "feature_importance": [],
+            "status": "initializing"
+        })
+    
     return jsonify({
         "metrics": app_state["metrics"],
         "histogram": _generate_histogram(),
         "top_risk_files": _get_top_risk_files(),
         "confusion_matrix": _generate_confusion_matrix(),
-        "health_trend": _generate_health_trend()
+        "health_trend": _generate_health_trend(),
+        "roc_curve": _generate_roc_curve(),
+        "pr_curve": _generate_pr_curve(),
+        "feature_importance": _get_feature_importance(),
+        "status": "ready"
     })
 
 def _generate_histogram():
-    df = app_state["df"]
-    if df is None:
+    df = app_state.get("df")
+    if df is None or len(df) == 0:
         return []
     bins = [i/20 for i in range(21)]
     hist = pd.cut(df["risk"], bins=bins).value_counts().sort_index()
     return [{"bin": f"{b.left:.2f}", "count": int(c)} for b, c in hist.items()]
 
 def _get_top_risk_files():
-    df = app_state["df"]
-    if df is None:
+    df = app_state.get("df")
+    if df is None or len(df) == 0:
         return []
     return [{
         "file": os.path.basename(str(row["file"])),
@@ -688,21 +712,48 @@ def _get_top_risk_files():
     } for _, row in df.head(10).iterrows()]
 
 def _generate_confusion_matrix():
-    df = app_state["df"]
-    if df is None:
-        return {"tp": 0, "fp": 0, "tn": 0, "fn": 0}
+    """Generate confusion matrix with proper threshold-based predictions"""
+    df = app_state.get("df")
+    if df is None or len(df) == 0:
+        return {"tp": 0, "fp": 0, "tn": 0, "fn": 0, "has_labels": False}
+    
     y_true = df.get("buggy", pd.Series([0]*len(df))).fillna(0).astype(int)
-    y_pred = df.get("risky", pd.Series([0]*len(df))).fillna(0).astype(int)
+    y_prob = df.get("risk", pd.Series([0]*len(df))).fillna(0)
+    
+    # Validate data
+    if len(y_true) == 0 or len(y_prob) == 0:
+        return {"tp": 0, "fp": 0, "tn": 0, "fn": 0, "has_labels": False}
+    
+    if len(y_true) != len(y_prob):
+        logger.warning("Confusion matrix: y_true and y_prob length mismatch")
+        return {"tp": 0, "fp": 0, "tn": 0, "fn": 0, "has_labels": False}
+    
+    # Check if we have both classes
+    has_positive = (y_true == 1).any()
+    has_negative = (y_true == 0).any()
+    
+    if not (has_positive and has_negative):
+        return {"tp": 0, "fp": 0, "tn": 0, "fn": 0, "has_labels": False}
+    
+    # Use 0.5 threshold for binary predictions
+    y_pred = (y_prob >= 0.5).astype(int)
+    
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    
     return {
-        "tp": int(((y_true == 1) & (y_pred == 1)).sum()),
-        "fp": int(((y_true == 0) & (y_pred == 1)).sum()),
-        "tn": int(((y_true == 0) & (y_pred == 0)).sum()),
-        "fn": int(((y_true == 1) & (y_pred == 0)).sum())
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+        "has_labels": True
     }
 
 def _generate_health_trend():
-    df = app_state["df"]
-    if df is None or "repo" not in df.columns:
+    df = app_state.get("df")
+    if df is None or len(df) == 0 or "repo" not in df.columns:
         return []
     trend = df.groupby("repo").agg({"risk": "mean", "buggy": "sum"}).reset_index()
     return [{
@@ -710,6 +761,186 @@ def _generate_health_trend():
         "avg_risk": round(row["risk"], 3),
         "bugs": int(row["buggy"])
     } for _, row in trend.iterrows()]
+
+def _generate_roc_curve():
+    """Generate ROC curve data points and AUC score"""
+    df = app_state.get("df")
+    if df is None or len(df) == 0:
+        return {"points": [], "auc": 0, "has_labels": False}
+    
+    y_true = df.get("buggy", pd.Series([0]*len(df))).fillna(0).astype(int)
+    y_prob = df.get("risk", pd.Series([0]*len(df))).fillna(0)
+    
+    # Validate data
+    if len(y_true) == 0 or len(y_prob) == 0:
+        return {"points": [], "auc": 0, "has_labels": False}
+    
+    if len(y_true) != len(y_prob):
+        logger.warning("ROC curve: y_true and y_prob length mismatch")
+        return {"points": [], "auc": 0, "has_labels": False}
+    
+    # Check if we have both classes
+    has_positive = (y_true == 1).any()
+    has_negative = (y_true == 0).any()
+    
+    if not (has_positive and has_negative):
+        return {"points": [], "auc": 0, "has_labels": False}
+    
+    # Sort by probability (descending)
+    sorted_idx = y_prob.argsort()[::-1]
+    y_true_sorted = y_true.iloc[sorted_idx].values
+    y_prob_sorted = y_prob.iloc[sorted_idx].values
+    
+    # Calculate ROC points
+    total_positive = y_true.sum()
+    total_negative = len(y_true) - total_positive
+    
+    if total_positive == 0 or total_negative == 0:
+        return {"points": [], "auc": 0, "has_labels": False}
+    
+    tp = 0
+    fp = 0
+    points = [{"x": 0, "y": 0}]
+    
+    for i in range(len(y_true_sorted)):
+        if y_true_sorted[i] == 1:
+            tp += 1
+        else:
+            fp += 1
+        
+        points.append({
+            "x": fp / total_negative,
+            "y": tp / total_positive
+        })
+    
+    # Calculate AUC using trapezoidal rule
+    auc = 0
+    for i in range(1, len(points)):
+        auc += (points[i]["x"] - points[i-1]["x"]) * (points[i]["y"] + points[i-1]["y"]) / 2
+    
+    return {
+        "points": points,
+        "auc": round(float(auc), 3),
+        "has_labels": True
+    }
+
+def _generate_pr_curve():
+    """Generate Precision-Recall curve data points"""
+    df = app_state.get("df")
+    if df is None or len(df) == 0:
+        return {"points": [], "has_labels": False}
+    
+    y_true = df.get("buggy", pd.Series([0]*len(df))).fillna(0).astype(int)
+    y_prob = df.get("risk", pd.Series([0]*len(df))).fillna(0)
+    
+    # Validate data
+    if len(y_true) == 0 or len(y_prob) == 0:
+        return {"points": [], "has_labels": False}
+    
+    if len(y_true) != len(y_prob):
+        logger.warning("PR curve: y_true and y_prob length mismatch")
+        return {"points": [], "has_labels": False}
+    
+    # Check if we have positive class
+    total_positive = y_true.sum()
+    if total_positive == 0:
+        return {"points": [], "has_labels": False}
+    
+    # Sort by probability (descending)
+    sorted_idx = y_prob.argsort()[::-1]
+    y_true_sorted = y_true.iloc[sorted_idx].values
+    
+    # Calculate PR points
+    tp = 0
+    points = []
+    
+    for i in range(len(y_true_sorted)):
+        if y_true_sorted[i] == 1:
+            tp += 1
+        
+        precision = tp / (i + 1)
+        recall = tp / total_positive
+        
+        points.append({
+            "x": float(recall),
+            "y": float(precision)
+        })
+    
+    return {
+        "points": points,
+        "has_labels": True
+    }
+
+def _get_feature_importance():
+    """Get feature importance from SHAP values or model feature importances"""
+    df = app_state.get("df")
+    if df is None or len(df) == 0:
+        return []
+    
+    # Try to get SHAP values first
+    shap_vals = app_state.get("global_shap")
+    X_disp = app_state.get("global_shap_X")
+    
+    if shap_vals is not None and X_disp is not None:
+        try:
+            # Calculate mean absolute SHAP values
+            mean_shap = np.abs(shap_vals).mean(axis=0)
+            
+            # Handle multi-class SHAP values
+            if len(mean_shap.shape) > 1:
+                mean_shap = mean_shap.flatten()
+            
+            feature_importance = []
+            for i, feature in enumerate(X_disp.columns):
+                if i < len(mean_shap):
+                    feature_importance.append({
+                        "feature": feature,
+                        "value": round(float(mean_shap[i]), 4)
+                    })
+            
+            # Sort by importance
+            feature_importance.sort(key=lambda x: x["value"], reverse=True)
+            return feature_importance[:20]  # Return top 20
+            
+        except Exception as e:
+            logger.warning(f"Could not compute SHAP importance: {e}")
+    
+    # Fallback to model feature importances
+    model_data = app_state.get("model")
+    if model_data is not None:
+        try:
+            model = model_data["model"] if isinstance(model_data, dict) else model_data
+            
+            if hasattr(model, 'feature_importances_'):
+                feature_names = getattr(model, 'feature_names_in_', None)
+                if feature_names is not None:
+                    importance_list = []
+                    for i, importance in enumerate(model.feature_importances_):
+                        if i < len(feature_names):
+                            importance_list.append({
+                                "feature": feature_names[i],
+                                "value": round(float(importance), 4)
+                            })
+                    
+                    importance_list.sort(key=lambda x: x["value"], reverse=True)
+                    return importance_list[:20]
+                    
+        except Exception as e:
+            logger.warning(f"Could not extract model feature importances: {e}")
+    
+    return []
+
+@app.route("/api/importance")
+def get_feature_importance():
+    """Get feature importance for SHAP visualization"""
+    try:
+        # Use the same function as overview API for consistency
+        importance = _get_feature_importance()
+        return jsonify(importance)
+        
+    except Exception as e:
+        logger.error(f"Error getting feature importance: {e}")
+        return jsonify([])
 
 @app.route("/api/files")
 @cache.cached(timeout=300, query_string=True)

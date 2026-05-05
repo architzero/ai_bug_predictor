@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Results — CodeSentinel{% endblock %}
+{% block title %}Results — Bug Predictor{% endblock %}
 
 {% block content %}
 <div x-data="resultsDashboard('{{ scan_id }}')" x-init="init()" class="relative">
@@ -185,21 +185,35 @@
       <!-- Charts column -->
       <div class="lg:col-span-2 space-y-6">
 
-        <!-- Row 1: histogram + cumulative gain -->
+        <!-- Row 1: Risk Distribution + Top 10 Files -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
             <h3 class="text-sm font-semibold text-gray-900 mb-1">Risk Distribution</h3>
-            <p class="text-xs text-gray-400 mb-3">How many files fall in each risk band</p>
+            <p class="text-xs text-gray-400 mb-3">Files categorized by risk tier (percentile-based)</p>
             <div class="h-52"><canvas id="riskHistogram"></canvas></div>
           </div>
           <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-gray-900 mb-1">Cumulative Gain Curve</h3>
-            <p class="text-xs text-gray-400 mb-3">Review top X% of files → catch Y% of bugs</p>
-            <div class="h-52"><canvas id="cumulativeGainChart"></canvas></div>
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Top 10 Riskiest Files</h3>
+            <p class="text-xs text-gray-400 mb-3">Highest probability of future defects</p>
+            <div class="h-52"><canvas id="topFilesChart"></canvas></div>
           </div>
         </div>
 
-        <!-- Row 2: feature importance + risk vs recency -->
+        <!-- Row 2: ROC Curve + PR Curve -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">ROC Curve</h3>
+            <p class="text-xs text-gray-400 mb-3">True Positive vs False Positive trade-off</p>
+            <div class="h-52"><canvas id="rocCurveChart"></canvas></div>
+          </div>
+          <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Precision-Recall Curve</h3>
+            <p class="text-xs text-gray-400 mb-3">Model performance on imbalanced defect data</p>
+            <div class="h-52"><canvas id="prCurveChart"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Row 3: Feature Importance + Model Performance -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
             <h3 class="text-sm font-semibold text-gray-900 mb-1">Global Feature Importance</h3>
@@ -207,19 +221,11 @@
             <div class="h-52"><canvas id="featureImportanceChart"></canvas></div>
           </div>
           <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-gray-900 mb-1">Risk vs Recency</h3>
-            <p class="text-xs text-gray-400 mb-3">Recently changed files tend to be riskier</p>
-            <div class="h-52"><canvas id="riskRecencyChart"></canvas></div>
+            <h3 class="text-sm font-semibold text-gray-900 mb-1">Model Performance</h3>
+            <p class="text-xs text-gray-400 mb-3">Local confusion matrix or cross-project reference</p>
+            <div class="h-52"><canvas id="confusionMatrixChart"></canvas></div>
           </div>
         </div>
-
-        <!-- Row 3: model validation -->
-        <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
-          <h3 class="text-sm font-semibold text-gray-900 mb-1">Model Validation</h3>
-          <p class="text-xs text-gray-400 mb-3">Precision / Recall when ground-truth labels are available</p>
-          <div class="h-52"><canvas id="confusionMatrixChart"></canvas></div>
-        </div>
-
       </div>
     </div><!-- /main grid -->
 
@@ -399,3 +405,4 @@
 
 </div>
 {% endblock %}
+

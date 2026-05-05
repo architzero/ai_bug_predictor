@@ -49,8 +49,6 @@ function riskTier(score) {
   return 'low';
 }
 
-// Percentile-based tier assignment — matches backend logic exactly:
-// CRITICAL = top 10%, HIGH = 10–25%, MODERATE = 25–50%, LOW = bottom 50%
 function assignPercentileTiers(files) {
   if (!files || files.length === 0) return files;
   const sorted = [...files].sort((a, b) => b.risk - a.risk);
@@ -64,7 +62,6 @@ function assignPercentileTiers(files) {
     else if (i < moderateCutoff) f._tier = 'MODERATE';
     else                          f._tier = 'LOW';
   });
-  // Return in original order (sorted by risk desc already)
   return sorted;
 }
 
@@ -180,34 +177,61 @@ function registerAlpineComponents() {
     isPanelOpen: false,
     isLoading: true,
     error: null,
+    modelEval: null,
     _chartsInitialized: false,
-    charts: { histogram: null, cumGain: null, importance: null, recency: null, confusion: null },
+    charts: { 
+      histogram: null, 
+      topFiles: null, 
+      importance: null, 
+      roc: null, 
+      pr: null, 
+      confusion: null 
+    },
 
     async init() {
       if (!this.scanId) {
-        this.error = 'No scan ID provided. Please start a new scan.';
+        this.error = 'No scan ID provided.';
         this.isLoading = false;
         return;
       }
 
       try {
-        const res = await fetch(`/api/scan_results/${this.scanId}`);
-        if (!res.ok) {
-          if (res.status === 404) throw new Error('Scan results not found or expired (results kept for 1 hour). Please run a new scan.');
-          throw new Error(`Server error ${res.status}`);
+        // First try to get overview data to check if backend is ready
+        const overviewRes = await fetch('/api/overview');
+        let overviewData = null;
+        
+        if (overviewRes.ok) {
+          overviewData = await overviewRes.json();
+          this.overview = overviewData;
+          
+          // Check if backend is still initializing
+          if (overviewData.status === 'initializing') {
+            this.error = 'Backend is still initializing. Please wait a moment and refresh.';
+            this.isLoading = false;
+            
+            // Auto-refresh after 3 seconds
+            setTimeout(() => {
+              window.location.reload();
+            }, 3000);
+            return;
+          }
         }
 
-        const data = await res.json();
+        // Get scan results
+        const scanRes = await fetch(`/api/scan_results/${this.scanId}`);
+        if (!scanRes.ok) {
+          throw new Error('Scan results not found or expired.');
+        }
+
+        const data = await scanRes.json();
 
         if (!data.files || data.files.length === 0) {
-          this.error = 'Scan completed but no source files were found.';
+          this.error = 'No source files found in scan.';
           this.isLoading = false;
           return;
         }
 
-        this.overview      = { metrics: data.metrics };
         this.repoName      = data.repo_name || 'Unknown Repository';
-        // Apply percentile-based tiers matching backend logic
         this.originalFiles = assignPercentileTiers(data.files);
         this.applyFilters();
 
@@ -219,17 +243,12 @@ function registerAlpineComponents() {
 
       } catch (err) {
         this.error = err.message;
+        console.error('Dashboard initialization error:', err);
       } finally {
         this.isLoading = false;
       }
     },
 
-    // ── Computed ──────────────────────────────────────────────────────────────
-    get highRiskCount() {
-      return this.originalFiles.filter(f => f._tier === 'CRITICAL' || f._tier === 'HIGH').length;
-    },
-
-    // Tier counts using percentile-based assignment (matches backend)
     get tierCounts() {
       return {
         critical: this.originalFiles.filter(f => f._tier === 'CRITICAL').length,
@@ -239,20 +258,16 @@ function registerAlpineComponents() {
       };
     },
 
-    // ── Filtering & sorting ───────────────────────────────────────────────────
     applyFilters() {
       let result = [...this.originalFiles];
-
       if (this.timeFilter !== 'all') {
         const days = parseInt(this.timeFilter);
         result = result.filter(f => (f.days_since_last_change || 9999) <= days);
       }
-
       if (this.searchQuery) {
         const q = this.searchQuery.toLowerCase();
         result = result.filter(f => f.filename.toLowerCase().includes(q));
       }
-
       this.files = result;
       this.applySorting();
     },
@@ -269,34 +284,27 @@ function registerAlpineComponents() {
       this.filteredFiles = [...this.files];
     },
 
-    // ── Risk helpers exposed to template ─────────────────────────────────────
     getRiskBadgeClass(file) {
-      // Use percentile tier if available, fall back to score-based
       if (file && file._tier) return tierBadgeClass(file._tier);
       return riskBadgeClass(file?.risk ?? file ?? 0);
     },
     getTextColor: riskTextClass,
     getTierBadge: tierBadgeClass,
 
-    // ── File detail panel ─────────────────────────────────────────────────────
     async selectFile(fileId) {
-      this.selectedFileId      = fileId;
+      this.selectedFileId = fileId;
       this.selectedFileDetails = null;
-      this.isPanelOpen         = true;
+      this.isPanelOpen = true;
 
       try {
         const res = await fetch(`/api/file?id=${encodeURIComponent(fileId)}&scan_id=${encodeURIComponent(this.scanId)}`);
         if (!res.ok) throw new Error('Failed to fetch file details');
         const details = await res.json();
 
-        // Attach tier from originalFiles
         const fileObj = this.originalFiles.find(f => f.id === fileId);
         details._tier = fileObj?._tier || null;
-
-        // Build human-readable explanation from SHAP values
         details.explanation = buildExplanation(details.shap);
 
-        // Translate raw feature names to human labels in SHAP arrays
         if (details.shap?.positive) {
           details.shap.positive = details.shap.positive.map(s => ({ ...s, label: featureLabel(s.feature) }));
         }
@@ -317,309 +325,452 @@ function registerAlpineComponents() {
       }
     },
 
-    // ── Chart initialisation ──────────────────────────────────────────────────
     initCharts() {
       if (this._chartsInitialized) return;
       if (!this.originalFiles || this.originalFiles.length === 0) return;
       this._chartsInitialized = true;
 
       this._buildHistogram();
-      this._buildCumulativeGain();
+      this._buildTopFilesChart();
       this._buildImportance();
-      this._buildRiskRecency();
+      this._buildROC();
+      this._buildPR();
       this._buildConfusionMatrix();
     },
 
     _buildHistogram() {
       const ctx = safeCanvas('riskHistogram');
       if (!ctx) return;
-
-      // Use percentile tiers for histogram
-      const counts = {
-        CRITICAL: this.tierCounts.critical,
-        HIGH:     this.tierCounts.high,
-        MODERATE: this.tierCounts.moderate,
-        LOW:      this.tierCounts.low,
-      };
-
+      
+      // Use real histogram data from API
+      const histogramData = this.overview?.histogram || [];
+      if (!histogramData || histogramData.length === 0) {
+        // Fallback to tier counts if histogram data not available
+        const tc = this.tierCounts;
+        this.charts.histogram = destroyChart(this.charts.histogram);
+        this.charts.histogram = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['CRITICAL', 'HIGH', 'MODERATE', 'LOW'],
+            datasets: [{
+              label: 'Files',
+              data: [tc.critical, tc.high, tc.moderate, tc.low],
+              backgroundColor: ['#DC2626', '#EA580C', '#D97706', '#16A34A'],
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+              legend: { display: false },
+              title: { display: true, text: 'Risk Distribution by Tier', font: { size: 13, weight: '600' } }
+            },
+            scales: {
+              y: { beginAtZero: true, title: { display: true, text: 'Number of Files' } },
+              x: { grid: { display: false } }
+            }
+          }
+        });
+        return;
+      }
+      
+      // Build proper histogram from risk scores
       this.charts.histogram = destroyChart(this.charts.histogram);
       this.charts.histogram = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: ['CRITICAL\n(top 10%)', 'HIGH\n(10–25%)', 'MODERATE\n(25–50%)', 'LOW\n(bottom 50%)'],
+          labels: histogramData.map(d => d.bin),
           datasets: [{
             label: 'Files',
-            data: [counts.CRITICAL, counts.HIGH, counts.MODERATE, counts.LOW],
-            backgroundColor: ['#DC2626', '#EA580C', '#D97706', '#16A34A'],
+            data: histogramData.map(d => d.count),
+            backgroundColor: '#6366F1',
+            borderColor: '#4F46E5',
+            borderWidth: 1,
             borderRadius: 4,
           }],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: {
+          plugins: { 
             legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: (item) => ` ${item.raw} file${item.raw !== 1 ? 's' : ''}`,
-              },
-            },
+            title: { display: true, text: 'Risk Score Distribution', font: { size: 13, weight: '600' } }
           },
           scales: {
-            y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#f1f5f9' } },
-            x: { grid: { display: false } },
-          },
-        },
+            y: { beginAtZero: true, title: { display: true, text: 'Number of Files' } },
+            x: { 
+              title: { display: true, text: 'Risk Score Bins' },
+              grid: { display: false } 
+            }
+          }
+        }
       });
     },
 
-    _buildCumulativeGain() {
-      const ctx = safeCanvas('cumulativeGainChart');
+    _buildTopFilesChart() {
+      const ctx = safeCanvas('topFilesChart');
       if (!ctx) return;
-
-      const sorted    = [...this.originalFiles].sort((a, b) => b.risk - a.risk);
-      const totalBugs = sorted.filter(f => f.buggy === 1).length;
-      const hasBuggy  = totalBugs > 0;
-
-      let captured = 0;
-      const modelPoints = sorted.map((f, i) => {
-        if (f.buggy === 1) captured++;
-        return {
-          x: +((i + 1) / sorted.length * 100).toFixed(1),
-          y: hasBuggy ? +(captured / totalBugs * 100).toFixed(1) : +((i + 1) / sorted.length * 100).toFixed(1),
-        };
+      const top10 = [...this.originalFiles].sort((a, b) => b.risk - a.risk).slice(0, 10);
+      this.charts.topFiles = destroyChart(this.charts.topFiles);
+      this.charts.topFiles = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: top10.map(f => f.filename.length > 20 ? f.filename.substring(0, 17) + '...' : f.filename),
+          datasets: [{
+            label: 'Risk Score',
+            data: top10.map(f => +(f.risk * 100).toFixed(1)),
+            backgroundColor: top10.map(f => riskChartColor(f.risk)),
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { 
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items) => top10[items[0].dataIndex].filename,
+                label: (item) => ` Risk: ${item.raw}% (${top10[item.dataIndex]._tier})`
+              }
+            }
+          },
+          scales: {
+            x: { min: 0, max: 100, title: { display: true, text: 'Risk Probability (%)', font: { size: 10 } } },
+            y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+          }
+        }
       });
+    },
 
-      const randomPoints = [{ x: 0, y: 0 }, { x: 100, y: 100 }];
+    _buildROC() {
+      const ctx = safeCanvas('rocCurveChart');
+      if (!ctx) return;
+      
+      // Use real ROC data from API
+      const rocData = this.overview?.roc_curve;
+      if (!rocData || !rocData.has_labels || !rocData.points || rocData.points.length === 0) {
+        // Show "No data available" message
+        this.charts.roc = destroyChart(this.charts.roc);
+        this.charts.roc = new Chart(ctx, {
+          type: 'line',
+          data: {
+            datasets: [{
+              label: 'No data available',
+              data: [{x: 0, y: 0}],
+              borderColor: '#94a3b8',
+              borderWidth: 2,
+              pointRadius: 0,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: { display: true, text: 'ROC Curve - No Data Available', font: { size: 13, weight: '600' } },
+              legend: { display: false }
+            },
+            scales: {
+              x: { type: 'linear', min: 0, max: 1, title: { display: true, text: 'False Positive Rate' } },
+              y: { min: 0, max: 1, title: { display: true, text: 'True Positive Rate' } }
+            }
+          }
+        });
+        return;
+      }
 
-      this.charts.cumGain = destroyChart(this.charts.cumGain);
-      this.charts.cumGain = new Chart(ctx, {
+      // Validate points structure
+      const validPoints = rocData.points.filter(p => 
+        typeof p.x === 'number' && typeof p.y === 'number' && 
+        !isNaN(p.x) && !isNaN(p.y) && 
+        p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1
+      );
+
+      if (validPoints.length === 0) {
+        console.warn('ROC curve: No valid points found');
+        return;
+      }
+
+      this.charts.roc = destroyChart(this.charts.roc);
+      this.charts.roc = new Chart(ctx, {
         type: 'line',
         data: {
           datasets: [
             {
-              label: 'Model',
-              data: modelPoints,
+              label: 'Model ROC',
+              data: validPoints,
               borderColor: '#4F46E5',
-              backgroundColor: 'rgba(79,70,229,0.08)',
-              fill: true,
-              tension: 0.3,
+              borderWidth: 2.5,
               pointRadius: 0,
-              borderWidth: 2,
+              fill: false,
+              tension: 0.1
             },
             {
-              label: 'Random baseline',
-              data: randomPoints,
+              label: 'Random',
+              data: [{x: 0, y: 0}, {x: 1, y: 1}],
               borderColor: '#94a3b8',
               borderDash: [5, 5],
               pointRadius: 0,
-              borderWidth: 1.5,
-              fill: false,
-            },
-          ],
+              fill: false
+            }
+          ]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          interaction: { mode: 'index', intersect: false },
-          plugins: {
-            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-            tooltip: {
-              callbacks: {
-                title: (items) => `Review top ${items[0].parsed.x.toFixed(0)}% of files`,
-                label: (item) => ` ${item.dataset.label}: catch ${item.parsed.y.toFixed(0)}% of bugs`,
-              },
+          plugins: { 
+            title: { 
+              display: true, 
+              text: `ROC Curve (AUC: ${rocData.auc || 'N/A'})`,
+              font: { size: 13, weight: '600' }
             },
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
           },
           scales: {
-            x: { type: 'linear', min: 0, max: 100, title: { display: true, text: '% Files Reviewed', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
-            y: { min: 0, max: 100, title: { display: true, text: '% Bugs Caught', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+            x: { type: 'linear', min: 0, max: 1, title: { display: true, text: 'False Positive Rate', font: { size: 10 } } },
+            y: { min: 0, max: 1, title: { display: true, text: 'True Positive Rate', font: { size: 10 } } }
+          }
+        }
+      });
+    },
+
+    _buildPR() {
+      const ctx = safeCanvas('prCurveChart');
+      if (!ctx) return;
+      
+      // Use real PR curve data from API
+      const prData = this.overview?.pr_curve;
+      if (!prData || !prData.has_labels || !prData.points || prData.points.length === 0) {
+        // Show "No data available" message
+        this.charts.pr = destroyChart(this.charts.pr);
+        this.charts.pr = new Chart(ctx, {
+          type: 'line',
+          data: {
+            datasets: [{
+              label: 'No data available',
+              data: [{x: 0, y: 0}],
+              borderColor: '#94a3b8',
+              borderWidth: 2,
+              pointRadius: 0,
+            }]
           },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: { display: true, text: 'Precision-Recall Curve - No Data Available', font: { size: 13, weight: '600' } },
+              legend: { display: false }
+            },
+            scales: {
+              x: { type: 'linear', min: 0, max: 1, title: { display: true, text: 'Recall' } },
+              y: { min: 0, max: 1, title: { display: true, text: 'Precision' } }
+            }
+          }
+        });
+        return;
+      }
+
+      // Validate points structure
+      const validPoints = prData.points.filter(p => 
+        typeof p.x === 'number' && typeof p.y === 'number' && 
+        !isNaN(p.x) && !isNaN(p.y) && 
+        p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1
+      );
+
+      if (validPoints.length === 0) {
+        console.warn('PR curve: No valid points found');
+        return;
+      }
+
+      this.charts.pr = destroyChart(this.charts.pr);
+      this.charts.pr = new Chart(ctx, {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: 'Precision-Recall',
+            data: validPoints,
+            borderColor: '#10B981',
+            borderWidth: 2.5,
+            pointRadius: 0,
+            fill: false,
+            tension: 0.1
+          }]
         },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { 
+            title: { 
+              display: true, 
+              text: 'Precision-Recall Curve',
+              font: { size: 13, weight: '600' }
+            },
+            legend: { display: false }
+          },
+          scales: {
+            x: { type: 'linear', min: 0, max: 1, title: { display: true, text: 'Recall', font: { size: 10 } } },
+            y: { min: 0, max: 1, title: { display: true, text: 'Precision', font: { size: 10 } } }
+          }
+        }
       });
     },
 
     _buildImportance() {
       const ctx = safeCanvas('featureImportanceChart');
       if (!ctx) return;
-
-      const buildFallback = () => {
-        const tc = this.tierCounts;
+      
+      // Use real importance data from API
+      const importanceData = this.overview?.feature_importance || [];
+      if (!importanceData || importanceData.length === 0) {
+        // Fallback to API call if not in overview
+        fetch('/api/importance')
+          .then(r => r.ok ? r.json() : [])
+          .then(data => {
+            const top8 = data.slice(0, 8);
+            this._renderImportanceChart(ctx, top8);
+          })
+          .catch(err => {
+            console.warn('Failed to fetch feature importance:', err);
+            this._renderImportanceChart(ctx, []);
+          });
+        return;
+      }
+      
+      this._renderImportanceChart(ctx, importanceData.slice(0, 8));
+    },
+    
+    _renderImportanceChart(ctx, data) {
+      if (!data || data.length === 0) {
+        // Show "No data available" message
         this.charts.importance = destroyChart(this.charts.importance);
         this.charts.importance = new Chart(ctx, {
           type: 'bar',
           data: {
-            labels: ['CRITICAL (top 10%)', 'HIGH (10–25%)', 'MODERATE (25–50%)', 'LOW (bottom 50%)'],
             datasets: [{
-              label: 'Files',
-              data: [tc.critical, tc.high, tc.moderate, tc.low],
-              backgroundColor: ['#DC2626', '#EA580C', '#D97706', '#16A34A'],
-              borderRadius: 3,
-            }],
+              label: 'No data available',
+              data: [],
+              backgroundColor: '#94a3b8',
+              borderRadius: 4,
+            }]
           },
           options: {
-            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-              legend: { display: false },
-              title: { display: true, text: 'Risk Tier Distribution (percentile)', font: { size: 11 } },
+              title: { display: true, text: 'Feature Importance - No Data Available', font: { size: 13, weight: '600' } },
+              legend: { display: false }
             },
             scales: {
-              x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#f1f5f9' } },
-              y: { grid: { display: false } },
-            },
-          },
+              x: { beginAtZero: true, title: { display: true, text: 'Importance' } },
+              y: { grid: { display: false } }
+            }
+          }
         });
-      };
-
-      fetch('/api/importance')
-        .then(r => r.ok ? r.json() : Promise.reject())
-        .then(data => {
-          if (!Array.isArray(data) || data.length === 0) throw new Error('empty');
-          const top8 = data.slice(0, 8);
-          this.charts.importance = destroyChart(this.charts.importance);
-          this.charts.importance = new Chart(ctx, {
-            type: 'bar',
-            data: {
-              labels: top8.map(d => featureLabel(d.feature)),
-              datasets: [{
-                label: 'Mean |SHAP|',
-                data: top8.map(d => d.value),
-                backgroundColor: '#4F46E5',
-                borderRadius: 3,
-              }],
-            },
-            options: {
-              indexAxis: 'y',
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { display: false } },
-              scales: {
-                x: { beginAtZero: true, title: { display: true, text: 'Mean |SHAP|', font: { size: 10 } }, grid: { color: '#f1f5f9' } },
-                y: { grid: { display: false }, ticks: { font: { size: 10 } } },
-              },
-            },
-          });
-        })
-        .catch(() => buildFallback());
-    },
-
-    _buildRiskRecency() {
-      const ctx = safeCanvas('riskRecencyChart');
-      if (!ctx) return;
-
-      const points = this.originalFiles
-        .filter(f => f.days_since_last_change !== undefined && f.days_since_last_change !== null)
-        .map(f => ({
-          x: f.days_since_last_change,
-          y: +(f.risk * 100).toFixed(1),
-          filename: f.filename,
-          risk: f.risk,
-        }));
-
-      if (points.length === 0) {
-        ctx.parentElement.innerHTML = '<div class="h-48 flex items-center justify-center text-gray-400 text-sm">No recency data available</div>';
         return;
       }
-
-      this.charts.recency = destroyChart(this.charts.recency);
-      this.charts.recency = new Chart(ctx, {
-        type: 'scatter',
+      
+      this.charts.importance = destroyChart(this.charts.importance);
+      this.charts.importance = new Chart(ctx, {
+        type: 'bar',
         data: {
+          labels: data.map(d => featureLabel(d.feature)),
           datasets: [{
-            label: 'Files',
-            data: points,
-            backgroundColor: points.map(p => riskChartColor(p.risk) + 'aa'),
-            borderColor: points.map(p => riskChartColor(p.risk)),
-            borderWidth: 1,
-            pointRadius: 5,
-            pointHoverRadius: 7,
+            label: 'Mean |SHAP|',
+            data: data.map(d => d.value),
+            backgroundColor: '#6366F1',
+            borderRadius: 4,
           }],
         },
         options: {
+          indexAxis: 'y',
           responsive: true,
           maintainAspectRatio: false,
-          plugins: {
+          plugins: { 
             legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: (item) => `${item.raw.filename}: ${item.raw.y}% risk, ${item.raw.x}d ago`,
-              },
-            },
+            title: { display: true, text: 'Feature Importance (SHAP)', font: { size: 13, weight: '600' } }
           },
           scales: {
-            x: { title: { display: true, text: 'Days Since Last Change', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
-            y: { min: 0, max: 100, title: { display: true, text: 'Risk Score (%)', font: { size: 11 } }, grid: { color: '#f1f5f9' } },
-          },
-        },
+            x: { beginAtZero: true, title: { display: true, text: 'Importance' } },
+            y: { grid: { display: false } }
+          }
+        }
       });
     },
 
     _buildConfusionMatrix() {
       const ctx = safeCanvas('confusionMatrixChart');
       if (!ctx) return;
-
-      const hasBuggy = this.originalFiles.some(f => f.buggy !== undefined && f.buggy !== null);
-      if (!hasBuggy) {
-        ctx.parentElement.innerHTML = '<div class="h-48 flex items-center justify-center text-gray-400 text-sm text-center px-4">Model validation unavailable<br>(no ground truth labels in this scan)</div>';
+      
+      // Use real confusion matrix data from API
+      const cmData = this.overview?.confusion_matrix;
+      if (!cmData || !cmData.has_labels) {
+        // Show "No data available" message
+        this.charts.confusion = destroyChart(this.charts.confusion);
+        this.charts.confusion = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['No labels available'],
+            datasets: [{
+              label: 'No data',
+              data: [0],
+              backgroundColor: ['#94a3b8'],
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: { display: true, text: 'Confusion Matrix - No Data Available', font: { size: 13, weight: '600' } },
+              legend: { display: false }
+            },
+            scales: {
+              y: { beginAtZero: true },
+              x: { grid: { display: false } }
+            }
+          }
+        });
         return;
       }
 
-      const tp = this.originalFiles.filter(f => f.buggy === 1 && f.risk >= 0.5).length;
-      const fp = this.originalFiles.filter(f => f.buggy === 0 && f.risk >= 0.5).length;
-      const tn = this.originalFiles.filter(f => f.buggy === 0 && f.risk < 0.5).length;
-      const fn = this.originalFiles.filter(f => f.buggy === 1 && f.risk < 0.5).length;
-
-      const precision = tp + fp > 0 ? (tp / (tp + fp) * 100).toFixed(0) : 0;
-      const recall    = tp + fn > 0 ? (tp / (tp + fn) * 100).toFixed(0) : 0;
-
+      // Use bar chart for confusion matrix (more reliable than matrix type)
       this.charts.confusion = destroyChart(this.charts.confusion);
       this.charts.confusion = new Chart(ctx, {
-        type: 'doughnut',
+        type: 'bar',
         data: {
-          labels: [
-            `True Positive (${tp})`,
-            `False Positive (${fp})`,
-            `True Negative (${tn})`,
-            `False Negative (${fn})`,
-          ],
+          labels: ['True Negative', 'False Positive', 'False Negative', 'True Positive'],
           datasets: [{
-            data: [tp, fp, tn, fn],
-            backgroundColor: ['#16A34A', '#EA580C', '#3B82F6', '#DC2626'],
-            borderWidth: 0,
+            label: 'Count',
+            data: [cmData.tn, cmData.fp, cmData.fn, cmData.tp],
+            backgroundColor: ['#3B82F6', '#F59E0B', '#EF4444', '#10B981'],
+            borderRadius: 4,
           }],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          cutout: '65%',
-          plugins: {
-            legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } },
-            tooltip: { callbacks: { label: (item) => ` ${item.label}` } },
+          plugins: { 
+            title: { display: true, text: 'Confusion Matrix', font: { size: 13, weight: '600' } },
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (context) => {
+                  const labels = ['True Negative (Correct)', 'False Positive (Error)', 'False Negative (Missed)', 'True Positive (Correct)'];
+                  return `${labels[context.dataIndex]}: ${context.raw}`;
+                }
+              }
+            }
           },
-        },
-        plugins: [{
-          id: 'centerText',
-          afterDraw(chart) {
-            const { ctx: c, chartArea: { left, top, right, bottom } } = chart;
-            const cx = (left + right) / 2;
-            const cy = (top + bottom) / 2;
-            c.save();
-            c.textAlign = 'center';
-            c.fillStyle = '#1e293b';
-            c.font = 'bold 14px sans-serif';
-            c.fillText(`P: ${precision}%`, cx, cy - 8);
-            c.font = '12px sans-serif';
-            c.fillStyle = '#64748b';
-            c.fillText(`R: ${recall}%`, cx, cy + 10);
-            c.restore();
-          },
-        }],
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: 'Count' } },
+            x: { grid: { display: false } }
+          }
+        }
       });
     },
   }));
 }
 
-// ─── Bootstrap ────────────────────────────────────────────────────────────────
 document.addEventListener('alpine:init', registerAlpineComponents);
